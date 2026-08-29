@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { LogOut, Receipt, FlaskConical, Users } from "lucide-react";
 import { loadSession, clearSession, type Session } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
@@ -9,14 +10,31 @@ import { fetchRecentTrades, ApiError } from "@/lib/api";
 import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
 import { StatusStrip } from "@/components/StatusStrip";
 import { AccountSummary } from "@/components/AccountSummary";
-import { PositionsTable } from "@/components/PositionsTable";
-import { TradeHistoryTable } from "@/components/TradeHistoryTable";
 import { PerformanceSummaryPanel } from "@/components/PerformanceSummaryPanel";
-import { FollowersSummaryPanel } from "@/components/FollowersSummaryPanel";
-import { EquityChart } from "@/components/EquityChart";
 import { RiskPanel } from "@/components/RiskPanel";
 import { KillSwitch } from "@/components/KillSwitch";
 import { BrandMark } from "@/components/BrandMark";
+
+// Dynamically import heavy UI panels to eliminate layout shift and reduce initial JS bundle size
+const FollowersSummaryPanel = dynamic(
+  () => import( "@/components/FollowersSummaryPanel" ).then( ( mod ) => mod.FollowersSummaryPanel ),
+  { ssr: false, loading: () => <div className="h-24 panel animate-pulse" /> }
+);
+
+const PositionsTable = dynamic(
+  () => import( "@/components/PositionsTable" ).then( ( mod ) => mod.PositionsTable ),
+  { ssr: false, loading: () => <div className="h-48 panel animate-pulse" /> }
+);
+
+const TradeHistoryTable = dynamic(
+  () => import( "@/components/TradeHistoryTable" ).then( ( mod ) => mod.TradeHistoryTable ),
+  { ssr: false, loading: () => <div className="h-64 panel animate-pulse" /> }
+);
+
+const EquityChart = dynamic(
+  () => import( "@/components/EquityChart" ).then( ( mod ) => mod.EquityChart ),
+  { ssr: false, loading: () => <div className="h-[300px] panel animate-pulse" /> }
+);
 
 export default function DashboardPage () {
   const router = useRouter();
@@ -139,7 +157,17 @@ export default function DashboardPage () {
     router.push( "/login" );
   }
 
-  if ( !ready || !session ) return null;
+  if ( !ready || !session ) {
+    return (
+      <main className="min-h-screen flex flex-col bg-[var(--bg)]">
+        <div className="h-16 border-b border-[var(--hairline)] animate-pulse" />
+        <div className="flex-1 p-6 max-w-[1400px] mx-auto w-full space-y-6">
+          <div className="h-32 panel animate-pulse" />
+          <div className="h-64 panel animate-pulse" />
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen flex flex-col">
