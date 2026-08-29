@@ -12,6 +12,21 @@ dotenv.config( { path: ".env.local" } );
 // let cached: string | null | undefined;
 
 export function getPasswordHash (): string | null {
-  // Now safely reads the un-mangled hash from the environment
-  return process.env.LOGIN_HASH || null;
+  // 1. Check environment variable and decode from Base64
+  if ( process.env.LOGIN_HASH ) {
+    return Buffer.from( process.env.LOGIN_HASH, "base64" ).toString( "utf-8" );
+  }
+
+  // 2. Fallback to reading the file if running locally
+  try {
+    const hashPath = path.join( process.cwd(), ".credentials", "password.hash" );
+    if ( fs.existsSync( hashPath ) ) {
+      const fileHash = fs.readFileSync( hashPath, "utf8" ).trim();
+      if ( fileHash ) return fileHash;
+    }
+  } catch {
+    // Ignore file read errors
+  }
+
+  return null;
 }
