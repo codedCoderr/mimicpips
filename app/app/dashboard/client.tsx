@@ -12,12 +12,19 @@ import {
   ZapOff,
   TrendingUp,
   Activity,
-  Target
+  Target,
+  HelpCircle
 } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 
 interface GateStatus {
   emailVerified: boolean;
   exchangeConnected: boolean;
+  minimumBalanceMet: boolean;
+  minCopyTradeNotionalUSDT: number;
+  minActivationBalanceUSDT?: number;
+  warnBalanceUSDT?: number;
+  pauseBalanceUSDT?: number;
   subscriptionActive: boolean;
   noPendingInvoice: boolean;
   allGatesMet: boolean;
@@ -25,6 +32,7 @@ interface GateStatus {
 
 interface CopyTradeLogEntry {
   id: string;
+  action: "OPEN" | "CLOSE";
   symbol: string;
   side: "LONG" | "SHORT";
   entryPrice: number;
@@ -33,6 +41,7 @@ interface CopyTradeLogEntry {
   realizedPnl: number;
   roiPercentage: number;
   status: string;
+  detail: string | null;
   executedAt: string;
   createdAt: string;
 }
@@ -42,29 +51,79 @@ function fmtUsd ( n: number | null ): string {
   return `$${ n?.toLocaleString( "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) }`;
 }
 
-function GateRow ( { label, met }: { label: string; met: boolean } ) {
+interface GateRowProps {
+  label: string;
+  met: boolean;
+  tip?: string;
+  actionUrl?: string;
+  onNavigate?: ( url: string ) => void;
+}
+
+function GateRow ( { label, met, tip, actionUrl, onNavigate }: GateRowProps ) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-[var(--hairline)] last:border-b-0">
-      <span className="text-sm text-[var(--muted)]">{ label }</span>
-      { met ? (
-        <span className="flex items-center gap-1 text-xs font-mono" style={ { color: "var(--long)" } }>
-          <CheckCircle2 size={ 13 } />
-          Met
-        </span>
-      ) : (
-        <span className="flex items-center gap-1 text-xs font-mono" style={ { color: "var(--muted)" } }>
-          <XCircle size={ 13 } />
-          Not yet
-        </span>
+    <div className="group relative flex items-center justify-between py-2 border-b border-[var(--hairline)] last:border-b-0">
+      <div className="flex items-center gap-1.5">
+        <span className="text-sm text-[var(--muted)]">{ label }</span>
+        { !met && tip && (
+          <div className="relative flex items-center">
+            <HelpCircle size={ 13 } className="text-[var(--muted-dim)] group-hover:text-[var(--text)] transition-colors cursor-help" />
+          </div>
+        ) }
+      </div>
+
+      <div className="flex items-center gap-2">
+        { met ? (
+          <span className="flex items-center gap-1 text-xs font-mono" style={ { color: "var(--long)" } }>
+            <CheckCircle2 size={ 13 } />
+            Met
+          </span>
+        ) : (
+          <div className="relative flex items-center">
+            <button
+              onClick={ () => actionUrl && onNavigate?.( actionUrl ) }
+              disabled={ !actionUrl }
+              className="flex items-center gap-1 text-xs font-mono hover:underline disabled:no-underline cursor-pointer disabled:cursor-default"
+              style={ { color: "var(--muted)" } }
+            >
+              <XCircle size={ 13 } />
+              Not yet
+            </button>
+          </div>
+        ) }
+      </div>
+
+      {/* Hover Tooltip Popup */ }
+      { !met && tip && (
+        <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block z-30 w-64 pointer-events-none">
+          <div className="bg-[var(--panel-raised)] border border-[var(--hairline-bright)] text-[var(--text)] text-[11px] font-mono p-2.5 shadow-2xl rounded-none">
+            <p className="text-[var(--text)] leading-relaxed">{ tip }</p>
+            { actionUrl && (
+              <span className="text-[10px] text-[var(--long)] mt-1.5 block font-semibold tracking-wide">
+                Click Not yet or visit section to resolve →
+              </span>
+            ) }
+          </div>
+        </div>
       ) }
     </div>
   );
 }
 
 function statusColor ( status: string ): string {
-  if ( status === "executed" || status === "SUCCESS" ) return "var(--long)";
+  if ( status === "executed" || status === "closed" || status === "SUCCESS" ) return "var(--long)";
   if ( status === "failed" ) return "var(--short)";
+  if ( status.startsWith( "skipped_" ) ) return "var(--warn)";
   return "var(--muted)";
+}
+
+function statusLabel(status: string): string {
+  if (status === "executed") return "Copied";
+  if (status === "closed") return "Closed";
+  if (status === "failed") return "Needs attention";
+  if (status === "skipped_duplicate") return "Already handled";
+  if (status.startsWith("skipped_")) return "Skipped";
+  if (status === "SUCCESS") return "Copied";
+  return status;
 }
 
 export function CopyTradingDashboardClient ( {
@@ -81,6 +140,26 @@ export function CopyTradingDashboardClient ( {
   const [ toggleError, setToggleError ] = useState<string | null>( null );
   const [ logEntries, setLogEntries ] = useState<CopyTradeLogEntry[] | null>( null );
   const [ logLoading, setLogLoading ] = useState( true );
+  const [ logError, setLogError ] = useState<string | null>( null );
+
+  const loadLogs = useCallback( ( showLoading = false ) => {
+    if ( showLoading ) setLogLoading( true );
+    fetch( "/api/saas/copy-trade-log?limit=20", { cache: "no-store" } )
+      .then( async ( res ) => {
+        const data = await res.json().catch( () => null );
+        if ( !res.ok ) {
+          throw new Error( data?.error ?? "Copy-trade activity is temporarily unavailable." );
+        }
+        setLogEntries( data.entries );
+        setLogError( null );
+      } )
+      .catch( () => {
+        setLogError( "Copy-trade activity is temporarily unavailable. Showing the latest loaded rows." );
+      } )
+      .finally( () => {
+        if ( showLoading ) setLogLoading( false );
+      } );
+  }, [] );
 
   const loadGates = useCallback( () => {
     fetch( "/api/saas/copy-trading" )
@@ -97,13 +176,22 @@ export function CopyTradingDashboardClient ( {
   }, [ loadGates ] );
 
   useEffect( () => {
-    setLogLoading( true );
-    fetch( "/api/saas/copy-trade-log?limit=20" )
-      .then( ( res ) => res.json() )
-      .then( ( data ) => setLogEntries( data.entries ) )
-      .catch( () => setLogEntries( null ) )
-      .finally( () => setLogLoading( false ) );
-  }, [ enabled ] );
+    loadLogs( true );
+  }, [ enabled, loadLogs ] );
+
+  useEffect( () => {
+    const refresh = () => {
+      if ( document.visibilityState === "visible" ) loadLogs( false );
+    };
+    const id = window.setInterval( refresh, 5_000 );
+    window.addEventListener( "focus", refresh );
+    document.addEventListener( "visibilitychange", refresh );
+    return () => {
+      window.clearInterval( id );
+      window.removeEventListener( "focus", refresh );
+      document.removeEventListener( "visibilitychange", refresh );
+    };
+  }, [ loadLogs ] );
 
   async function handleToggle () {
     setToggling( true );
@@ -135,21 +223,16 @@ export function CopyTradingDashboardClient ( {
   }
 
   // --- Derived Statistics Calculations ---
-  const totalTrades = logEntries?.length || 0;
-  const netPnl = logEntries?.reduce( ( sum, e ) => sum + ( e.realizedPnl || 0 ), 0 ) || 0;
-  const winningTrades = logEntries?.filter( e => ( e.realizedPnl || 0 ) > 0 ).length || 0;
-  const winRate = totalTrades > 0 ? ( winningTrades / totalTrades ) * 100 : 0;
+  const copiedTrades = logEntries?.filter( e => e.action === "OPEN" && e.status === "executed" ).length ?? 0;
+  const closedTrades = logEntries?.filter( e => e.action === "CLOSE" && e.status === "closed" ) ?? [];
+  const netPnl = closedTrades.reduce( ( sum, e ) => sum + ( e.realizedPnl || 0 ), 0 );
+  const winningTrades = closedTrades.filter( e => ( e.realizedPnl || 0 ) > 0 ).length;
+  const winRate = closedTrades.length > 0 ? ( winningTrades / closedTrades.length ) * 100 : 0;
 
   return (
     <main className="min-h-screen flex flex-col">
       <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-2.5 h-2.5 rounded-full"
-            style={ { background: enabled ? "var(--long)" : "var(--muted-dim)" } }
-          />
-          <span className="font-display font-semibold text-lg">Copy Trading</span>
-        </div>
+        <BrandMark label="Mimic Pips" />
         <div className="flex items-center gap-3">
           <button
             onClick={ () => router.push( "/app/profile" ) }
@@ -211,10 +294,41 @@ export function CopyTradingDashboardClient ( {
 
             { gates && (
               <div>
-                <GateRow label="Email verified" met={ gates.emailVerified } />
-                <GateRow label="Exchange connected" met={ gates.exchangeConnected } />
-                <GateRow label="Subscription active" met={ gates.subscriptionActive } />
-                <GateRow label="No unpaid invoices" met={ gates.noPendingInvoice } />
+                <GateRow
+                  label="Email verified"
+                  met={ gates.emailVerified }
+                  tip="Visit your Profile page to request or confirm your email verification link."
+                  actionUrl="/app/profile"
+                  onNavigate={ router.push }
+                />
+                <GateRow
+                  label="Exchange connected"
+                  met={ gates.exchangeConnected }
+                  tip="Visit Profile/Connect to add your Binance API key with Read and Futures permissions enabled."
+                  actionUrl="/app/connect"
+                  onNavigate={ router.push }
+                />
+                <GateRow
+                  label="Minimum starting balance"
+                  met={ gates.minimumBalanceMet ?? true }
+                  tip={ `You need at least $${ Number( gates.minActivationBalanceUSDT ?? gates.minCopyTradeNotionalUSDT ?? 300 ).toFixed( 2 ) } to turn on copy trading. After activation, new entries are only paused below $${ Number( gates.pauseBalanceUSDT ?? 150 ).toFixed( 2 ) }.` }
+                  actionUrl="/app/connect"
+                  onNavigate={ router.push }
+                />
+                <GateRow
+                  label="Subscription active"
+                  met={ gates.subscriptionActive }
+                  tip="Visit Billing to activate your copy trading subscription."
+                  actionUrl="/app/billing"
+                  onNavigate={ router.push }
+                />
+                <GateRow
+                  label="No unpaid invoices"
+                  met={ gates.noPendingInvoice }
+                  tip="Visit Billing to settle outstanding performance fee invoices before activating trades."
+                  actionUrl="/app/billing"
+                  onNavigate={ router.push }
+                />
               </div>
             ) }
 
@@ -260,7 +374,7 @@ export function CopyTradingDashboardClient ( {
             ) }
           </div>
 
-          {/* --- New Performance Overview Grid --- */ }
+          {/* --- Performance Overview Grid --- */ }
           { !logLoading && logEntries && logEntries.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="panel p-4 flex flex-col gap-1 hover:bg-[var(--panel-raised)] transition-colors">
@@ -292,7 +406,7 @@ export function CopyTradingDashboardClient ( {
                   <span className="text-xs font-mono">Copied Trades</span>
                 </div>
                 <span className="font-display text-xl font-semibold">
-                  { totalTrades }
+                  { copiedTrades }
                 </span>
               </div>
             </div>
@@ -306,6 +420,12 @@ export function CopyTradingDashboardClient ( {
             { logLoading && (
               <div className="p-8 flex items-center justify-center">
                 <Loader2 size={ 16 } className="animate-spin text-[var(--muted)]" />
+              </div>
+            ) }
+
+            { !logLoading && logError && (
+              <div className="px-5 py-3 border-b border-[var(--hairline)]">
+                <p className="text-xs font-mono text-[var(--warn)]">{ logError }</p>
               </div>
             ) }
 
@@ -324,7 +444,7 @@ export function CopyTradingDashboardClient ( {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--hairline)]">
-                      { [ "Symbol", "Side", "Entry / Exit", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
+                      { [ "Symbol", "Action", "Side", "Entry / Exit", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
                         <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">
                           { h }
                         </th>
@@ -332,13 +452,16 @@ export function CopyTradingDashboardClient ( {
                     </tr>
                   </thead>
                   <tbody className="font-mono">
-                    { logEntries.map( ( e: any ) => (
+                    { logEntries.map( ( e ) => (
                       <tr
                         key={ e.id }
                         className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors text-xs"
                       >
                         <td className="px-4 py-2.5 font-semibold whitespace-nowrap">
                           { ( e.symbol || "UNKNOWN" ).split( ":" )[ 0 ] }
+                        </td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
+                          { e.action ?? "OPEN" }
                         </td>
                         <td className="px-4 py-2.5">
                           <span
@@ -353,7 +476,14 @@ export function CopyTradingDashboardClient ( {
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
                           <div>In: { fmtUsd( e.entryPrice ?? 0 ) }</div>
-                          <div>Out: { ( e.exitPrice ?? 0 ) > 0 ? fmtUsd( e.exitPrice ) : "Active" }</div>
+                          <div>
+                            Out:{ " " }
+                            { ( e.exitPrice ?? 0 ) > 0
+                              ? fmtUsd( e.exitPrice )
+                              : e.action === "CLOSE"
+                                ? "Closed"
+                                : "Active" }
+                          </div>
                         </td>
                         <td className="px-4 py-2.5 tabular text-[var(--text)]">
                           { fmtUsd( e.marginAllocated ?? 0 ) }
@@ -367,7 +497,12 @@ export function CopyTradingDashboardClient ( {
                           </div>
                         </td>
                         <td className="px-4 py-2.5" style={ { color: statusColor( e.status ) } }>
-                          { e.status || "SUCCESS" }
+                          <div>{ statusLabel( e.status || "SUCCESS" ) }</div>
+                          { e.detail && (
+                            <div className="max-w-[220px] truncate text-[10px] text-[var(--muted)]" title={ e.detail }>
+                              { e.detail }
+                            </div>
+                          ) }
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
                           { new Date( e.executedAt || e.createdAt ).toLocaleString() }

@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0a0b0d;
+  --panel: #131519;
+  --panel-raised: #171a1f;
+  --hairline: #22252b;
+  --hairline-bright: #33373f;
+  --text: #e8e9eb;
+  --muted: #7a7f87;
+  --muted-dim: #52565d;
+
+  --long: #3dd68c;
+  --long-dim: #1f6b46;
+  --short: #f0495c;
+  --short-dim: #7a2530;
+  --warn: #e8a33d;
+  --kill: #c81e3a;
+  --kill-bright: #ff2d47;
+
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", system-ui,
+    sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace,
+    monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+}
+
+::selection {
+  background: var(--long-dim);
+  color: var(--text);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hairline-bright);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-dim);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+}
+
+.panel-raised {
+  background: var(--panel-raised);
+  border: 1px solid var(--hairline-bright);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none;
+    transition-duration: 0.01ms;
+    scroll-behavior: auto;
+  }
+
+  .pulse-dot {
+    animation: none;
+  }
+}

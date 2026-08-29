@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Receipt, FlaskConical, Clock } from "lucide-react";
+import { LogOut, Receipt, FlaskConical, Users } from "lucide-react";
 import { loadSession, clearSession, type Session } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
@@ -12,9 +12,11 @@ import { AccountSummary } from "@/components/AccountSummary";
 import { PositionsTable } from "@/components/PositionsTable";
 import { TradeHistoryTable } from "@/components/TradeHistoryTable";
 import { PerformanceSummaryPanel } from "@/components/PerformanceSummaryPanel";
+import { FollowersSummaryPanel } from "@/components/FollowersSummaryPanel";
 import { EquityChart } from "@/components/EquityChart";
 import { RiskPanel } from "@/components/RiskPanel";
 import { KillSwitch } from "@/components/KillSwitch";
+import { BrandMark } from "@/components/BrandMark";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -31,49 +33,14 @@ export default function DashboardPage() {
     setReady(true);
   }, [router]);
 
-  const { snapshot, connState, equityCurve, refreshSnapshot } = useLiveSnapshot(session);
+  const handleBotEventRef = useRef<(event: import("@/lib/types").BotEvent) => void>(() => {});
+  const handleBotEvent = useCallback((event: import("@/lib/types").BotEvent) => {
+    handleBotEventRef.current(event);
+  }, []);
 
-  // --- Snapshot Caching & Last Refreshed Time ---
-  const [cachedSnapshot, setCachedSnapshot] = useState<DashboardSnapshot | null>(null);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const { snapshot, connState, equityCurve, refreshSnapshot } = useLiveSnapshot(session, handleBotEvent);
 
-  useEffect(() => {
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("last_valid_snapshot");
-    if (saved) {
-      try { setCachedSnapshot(JSON.parse(saved)); } catch {}
-    }
-  }
-}, []);
-
-useEffect(() => {
-  if (snapshot && snapshot.account?.totalBalance > 0 && snapshot.health as any !== "unhealthy") {
-    setCachedSnapshot(snapshot);
-    localStorage.setItem("last_valid_snapshot", JSON.stringify(snapshot));
-  }
-}, [snapshot]);
-
-// 1. Resolve live health status string
-const liveHealthStatus = snapshot?.health
-  ? typeof snapshot.health === "string"
-    ? snapshot.health
-    : snapshot.health.status
-  : "unhealthy";
-
-// 2. Check if live feed is degraded or failing
-const isLiveDegraded =
-  !snapshot ||
-  liveHealthStatus === "unhealthy" ||
-  snapshot.account?.totalBalance === 0;
-
-// 3. Fallback to cache for balance data, BUT enforce real-time health status
-const displaySnapshot:any =
-  isLiveDegraded && cachedSnapshot
-    ? {
-        ...cachedSnapshot,
-        health: liveHealthStatus === "healthy" ? "degraded" : liveHealthStatus,
-      }
-    : snapshot;
+  const displaySnapshot: DashboardSnapshot | null = snapshot;
     
   // --- Trade History Pagination State ---
   const [trades, setTrades] = useState<RecentTradeRow[] | null>(null);
@@ -81,6 +48,7 @@ const displaySnapshot:any =
   const [tradesError, setTradesError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasMoreTrades, setHasMoreTrades] = useState(true);
+  const previousOpenSymbolsRef = useRef<Set<string> | null>(null);
 
   const loadTrades = useCallback(
     async (pageNum: number, isInitial = false) => {
@@ -90,10 +58,10 @@ const displaySnapshot:any =
       try {
         const limit = 10;
         const offset = (pageNum - 1) * limit;
-        const result = await fetchRecentTrades(session, limit, offset);
+        const { trades: page, hasMore } = await fetchRecentTrades(session, limit, offset);
 
-        setTrades((prev) => (isInitial || !prev ? result : [...prev, ...result]));
-        setHasMoreTrades(result.length === limit);
+        setTrades((prev) => (isInitial || !prev ? page : [...prev, ...page]));
+        setHasMoreTrades(hasMore);
         setTradesError(null);
       } catch (err) {
         setTradesError(
@@ -129,8 +97,44 @@ const displaySnapshot:any =
     loadTrades(1, true);
   }, [session, loadTrades, refreshSnapshot]);
 
+  useEffect(() => {
+    handleBotEventRef.current = (event) => {
+      if (event.type === "position.closed" || event.type === "snapshot.updated") {
+        refetch();
+      }
+    };
+  }, [refetch]);
+
+  useEffect(() => {
+    if (!displaySnapshot) return;
+
+    const currentOpenSymbols = new Set(
+      displaySnapshot.positions.map((position) => position.fullSymbol || position.symbol)
+    );
+    const previousOpenSymbols = previousOpenSymbolsRef.current;
+    previousOpenSymbolsRef.current = currentOpenSymbols;
+
+    if (!previousOpenSymbols) return;
+
+    for (const symbol of previousOpenSymbols) {
+      if (!currentOpenSymbols.has(symbol)) {
+        refetch();
+        break;
+      }
+    }
+  }, [displaySnapshot, refetch]);
+
+  useEffect(() => {
+    if (!session) return;
+    const id = setInterval(() => {
+      void loadTrades(1, true);
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [session, loadTrades]);
+
   async function handleDisconnect() {
     clearSession();
+    await fetch("/api/operator/bot-session", { method: "DELETE" }).catch(() => {});
     await fetch("/api/logout", { method: "POST" }).catch(() => {});
     router.push("/login");
   }
@@ -140,16 +144,13 @@ const displaySnapshot:any =
   return (
     <main className="min-h-screen flex flex-col">
       <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-  <div className="flex items-center gap-3">
-    <div className="w-2.5 h-2.5 rounded-full bg-[var(--long)]" />
-    <span className="font-display font-semibold text-lg">Control Room</span>
-  </div>
+  <BrandMark label="Mimic Pips" />
 
   <div className="flex items-center gap-3">
     {/* Trigger badge if socket is disconnected OR backend health is unhealthy */}
-    {(connState !== "live" || snapshot?.health as any === "unhealthy") && (
+    {(connState !== "live" || snapshot?.health?.status === "unhealthy") && (
       <span className="text-xs font-mono text-[var(--short)] border border-[var(--short-dim)] px-2 py-0.5 rounded mr-2">
-        {snapshot?.health as any === "unhealthy"
+        {snapshot?.health?.status === "unhealthy"
           ? "EXCHANGE UNHEALTHY (DISPLAYING CACHED)"
           : connState === "reconnecting"
           ? "RECONNECTING (DISPLAYING CACHED)"
@@ -170,6 +171,13 @@ const displaySnapshot:any =
     >
       <FlaskConical size={13} />
       Backtest
+    </button>
+    <button
+      onClick={() => router.push("/dashboard/followers")}
+      className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+    >
+      <Users size={13} />
+      Followers
     </button>
     <div className="w-px h-4 bg-[var(--hairline)]" />
     <button
@@ -196,6 +204,7 @@ const displaySnapshot:any =
             <div className="space-y-6 min-w-0">
               <AccountSummary snapshot={displaySnapshot} />
               <PerformanceSummaryPanel session={session} />
+              <FollowersSummaryPanel />
               <PositionsTable
                 positions={displaySnapshot.positions}
                 session={session}

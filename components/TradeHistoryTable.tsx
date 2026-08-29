@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Target, TrendingDown, RotateCw, ShieldCheck } from "lucide-react";
 import type { RecentTradeRow } from "@/lib/types";
 
 function fmtUsd(n: number, decimals = 2) {
   const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(n).toLocaleString(undefined, {
+  return `${sign}$${Math.abs(n).toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   })}`;
@@ -24,6 +25,65 @@ function timeAgo(iso: string, now: number): string {
   return "just now";
 }
 
+/**
+ * Renders the close reason as a styled badge instead of plain text —
+ * TP hits (which TP specifically), SL hits, ST flips, and breakeven
+ * exits each get a distinct color/icon so the outcome is scannable at a
+ * glance rather than read word-by-word. Falls back to plain text for any
+ * reason string the bot reports that isn't one of the known shapes.
+ */
+function CloseReasonBadge({ reason }: { reason: string }) {
+  if (!reason) return <span className="text-[var(--muted)]">—</span>;
+
+  const upper = reason.toUpperCase();
+
+  if (upper.includes("TP")) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+        style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}
+      >
+        <Target size={10} />
+        {reason}
+      </span>
+    );
+  }
+  if (upper.includes("SL")) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+        style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}
+      >
+        <TrendingDown size={10} />
+        {reason}
+      </span>
+    );
+  }
+  if (upper.includes("FLIP")) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+        style={{ color: "var(--warn)", border: "1px solid var(--warn)" }}
+      >
+        <RotateCw size={10} />
+        {reason}
+      </span>
+    );
+  }
+  if (upper.includes("BREAKEVEN")) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+        style={{ color: "var(--muted)", border: "1px solid var(--hairline-bright)" }}
+      >
+        <ShieldCheck size={10} />
+        {reason}
+      </span>
+    );
+  }
+  return <span className="text-[var(--muted)] text-xs">{reason}</span>;
+}
+
 export function TradeHistoryTable({
   trades,
   loading,
@@ -37,36 +97,79 @@ export function TradeHistoryTable({
   onLoadMore: () => void;
   hasMore: boolean;
 }) {
-  const now = Date.now();
-  const observerTarget = useRef<HTMLDivElement>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [symbolFilter, setSymbolFilter] = useState<string>("ALL");
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !loading) {
-          onLoadMore();
-        }
-      },
-      { threshold: 1.0 }
-    );
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
-    if (observerTarget.current) {
-      observer.observe(observerTarget.current);
-    }
+  // Callback ref (not a plain useRef + useEffect) — this fires exactly
+  // when the sentinel div actually mounts/unmounts in the DOM, which is
+  // what we need here: the sentinel is conditionally rendered (only
+  // when filteredTrades has content AND symbolFilter === "ALL"), and a
+  // plain useEffect observing a ref set before the div ever existed
+  // would silently attach to nothing and never re-attach on later
+  // renders — that was the actual bug that broke this. A callback ref
+  // re-fires on every mount, so it can't go stale the same way.
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const sentinelCallbackRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      observerRef.current?.disconnect();
+      if (!node) return;
 
-    return () => observer.disconnect();
-  }, [hasMore, loading, onLoadMore]);
+      observerRef.current = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting && hasMore && !loading) {
+            onLoadMore();
+          }
+        },
+        { threshold: 1.0 }
+      );
+      observerRef.current.observe(node);
+    },
+    [hasMore, loading, onLoadMore]
+  );
+
+  const symbols = useMemo(() => {
+    if (!trades) return [];
+    return Array.from(new Set(trades.map((t) => t.symbol))).sort();
+  }, [trades]);
+
+  const filteredTrades = useMemo(() => {
+    if (!trades) return trades;
+    if (symbolFilter === "ALL") return trades;
+    return trades.filter((t) => t.symbol === symbolFilter);
+  }, [trades, symbolFilter]);
 
   return (
     <div className="panel overflow-hidden">
-      <div className="px-5 py-3 border-b border-[var(--hairline)] flex items-center justify-between">
+      <div className="px-5 py-3 border-b border-[var(--hairline)] flex items-center justify-between gap-3">
         <span className="eyebrow">Recent Trades</span>
-        <a
-          href="/dashboard/ledger"
-          className="text-[11px] font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-        >
-          Full ledger →
-        </a>
+        <div className="flex items-center gap-3">
+          {symbols.length > 1 && (
+            <select
+              value={symbolFilter}
+              onChange={(e) => setSymbolFilter(e.target.value)}
+              className="bg-[var(--panel-raised)] border border-[var(--hairline)] text-[11px] font-mono
+                         text-[var(--muted)] px-2 py-1 focus:outline-none focus:border-[var(--long)] transition-colors"
+            >
+              <option value="ALL">All symbols</option>
+              {symbols.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          )}
+          <a
+            href="/dashboard/ledger"
+            className="text-[11px] font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors whitespace-nowrap"
+          >
+            Full ledger →
+          </a>
+        </div>
       </div>
 
       {error && (
@@ -75,18 +178,18 @@ export function TradeHistoryTable({
         </div>
       )}
 
-      {!error && !loading && trades && trades.length === 0 && (
+      {!error && !loading && filteredTrades && filteredTrades.length === 0 && (
         <div className="p-8 flex flex-col items-center justify-center gap-2 text-center">
           <p className="text-sm text-[var(--muted)] font-mono">
-            No closed trades yet.
+            {symbolFilter === "ALL" ? "No closed trades yet." : `No closed trades for ${symbolFilter}.`}
           </p>
         </div>
       )}
 
-      {!error && trades && trades.length > 0 && (
-        <div className="overflow-x-auto max-h-[400px]"> {/* Added max-h for scrolling */}
+      {!error && filteredTrades && filteredTrades.length > 0 && (
+        <div className="overflow-x-auto max-h-[400px]">
           <table className="w-full text-sm relative">
-            <thead className="sticky top-0 bg-[var(--background)] z-10">
+            <thead className="sticky top-0 bg-[var(--panel)] z-10">
               <tr className="border-b border-[var(--hairline)]">
                 {["Symbol", "Side", "Entry", "Exit", "Held", "PnL", "Closed", "Reason"].map(
                   (h) => (
@@ -101,8 +204,9 @@ export function TradeHistoryTable({
               </tr>
             </thead>
             <tbody className="font-mono">
-              {trades.map((t) => {
-                const pnlPositive = t.pnl >= 0;
+              {filteredTrades.map((t) => {
+                const pnlPositive = t.pnl > 0;
+                const pnlNegative = t.pnl < 0;
                 return (
                   <tr
                     key={t.id}
@@ -133,7 +237,7 @@ export function TradeHistoryTable({
                     </td>
                     <td
                       className="px-4 py-2.5 tabular font-semibold whitespace-nowrap"
-                      style={{ color: pnlPositive ? "var(--long)" : "var(--short)" }}
+                      style={{ color: pnlPositive ? "var(--long)" : pnlNegative ? "var(--short)" : "var(--muted)" }}
                     >
                       {pnlPositive ? "+" : ""}
                       {fmtUsd(t.pnl)}
@@ -141,16 +245,17 @@ export function TradeHistoryTable({
                     <td className="px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap">
                       {timeAgo(t.exitTime, now)}
                     </td>
-                    <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                      {t.closeReason || "—"}
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <CloseReasonBadge reason={t.closeReason} />
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          {/* Scroll Target */}
-          <div ref={observerTarget} className="h-4 w-full" />
+          {/* Scroll Target — only meaningful when not filtering, since
+              filtering is done client-side over already-loaded trades */}
+          {symbolFilter === "ALL" && <div ref={sentinelCallbackRef} className="h-4 w-full" />}
           {loading && (
              <div className="p-4 text-center">
                 <p className="text-xs font-mono text-[var(--muted)]">Loading more trades...</p>

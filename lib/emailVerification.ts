@@ -30,7 +30,7 @@ export async function sendVerificationEmail ( userId: ObjectId, email: string ):
     token,
     expiresAt,
     createdAt: new Date(),
-  } as any );
+  } );
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if ( !appUrl ) {
@@ -41,23 +41,72 @@ export async function sendVerificationEmail ( userId: ObjectId, email: string ):
 
   await sendEmail( {
     to: email,
-    subject: "Verify your email",
-    text: `Verify your email by opening this link: ${ verifyUrl }\n\nThis link expires in 24 hours.`,
+    subject: "Verify your email address",
+    text: `Welcome! Please verify your email address by opening the following link in your browser:\n\n${ verifyUrl }\n\nThis link will expire in 24 hours. If you did not request this email, you can safely ignore it.`,
     html: `
-      <div style="font-family: -apple-system, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px;">
-        <h1 style="font-size: 20px; margin-bottom: 12px;">Verify your email</h1>
-        <p style="color: #555; line-height: 1.5;">
-          Click the button below to verify your email address. This link expires in 24 hours.
-        </p>
-        <a href="${ verifyUrl }"
-           style="display: inline-block; background: #111; color: #fff; text-decoration: none;
-                  padding: 12px 24px; border-radius: 4px; margin-top: 16px; font-weight: 600;">
-          Verify email
-        </a>
-        <p style="color: #999; font-size: 12px; margin-top: 24px;">
-          If you didn't request this, you can safely ignore this email.
-        </p>
-      </div>
+      <!DOCTYPE html>
+      <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Verify your email address</title>
+        </head>
+        <body style="background-color: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 40px 16px; -webkit-font-smoothing: antialiased;">
+          <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; margin: 0 auto; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+            <!-- Top Accent Bar -->
+            <tr>
+              <td style="background-color: #111827; height: 6px;"></td>
+            </tr>
+
+            <!-- Content Area -->
+            <tr>
+              <td style="padding: 40px 32px 32px;">
+                <h1 style="color: #111827; font-size: 22px; font-weight: 700; margin: 0 0 16px 0; letter-spacing: -0.02em;">
+                  Verify your email address
+                </h1>
+
+                <p style="color: #4b5563; font-size: 15px; line-height: 1.6; margin: 0 0 24px 0;">
+                  Thanks for signing up! Please confirm your email address to finish setting up your account and get started.
+                </p>
+
+                <!-- Primary CTA Button -->
+                <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 28px 0;">
+                  <tr>
+                    <td align="center" style="border-radius: 8px; background-color: #111827;">
+                      <a href="${ verifyUrl }" target="_blank" style="display: inline-block; padding: 13px 26px; font-size: 14px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 8px;">
+                        Verify Email Address &rarr;
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="color: #6b7280; font-size: 13px; line-height: 1.5; margin: 0 0 24px 0;">
+                  This verification link will expire in <strong>24 hours</strong>.
+                </p>
+
+                <!-- Fallback URL Container -->
+                <div style="border-top: 1px solid #f3f4f6; padding-top: 20px; margin-top: 20px;">
+                  <p style="color: #9ca3af; font-size: 12px; line-height: 1.5; margin: 0 0 8px 0;">
+                    Having trouble with the button? Copy and paste this URL into your browser:
+                  </p>
+                  <a href="${ verifyUrl }" style="color: #2563eb; font-size: 12px; word-break: break-all; text-decoration: underline;">
+                    ${ verifyUrl }
+                  </a>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Footer Area -->
+            <tr>
+              <td style="background-color: #f9fafb; padding: 20px 32px; border-top: 1px solid #f3f4f6; text-align: center;">
+                <p style="color: #9ca3af; font-size: 12px; margin: 0; line-height: 1.5;">
+                  If you didn't create an account, no further action is required. You can safely ignore this email.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
     `,
   } );
 }

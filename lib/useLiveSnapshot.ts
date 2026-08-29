@@ -2,22 +2,31 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { BotEvent, DashboardSnapshot, EquityPoint } from "./types";
-import { wsUrlFrom, type Session } from "./session";
+import type { Session } from "./session";
 import { fetchSnapshot } from "./api";
+import { getErrorMessage } from "./errorMessage";
 
 export type ConnState = "connecting" | "live" | "reconnecting" | "offline";
 
 const MAX_EQUITY_POINTS = 200;
+const LIVE_POLL_INTERVAL_MS = 15_000;
+const MAX_RETRY_INTERVAL_MS = 60_000;
 
-export function useLiveSnapshot(session: Session | null) {
+export function useLiveSnapshot(session: Session | null, onBotEvent?: (event: BotEvent) => void) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [connState, setConnState] = useState<ConnState>("connecting");
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryDelay = useRef(1500);
   const mounted = useRef(true);
+  const onBotEventRef = useRef(onBotEvent);
+  const previousOpenSymbolsRef = useRef<Set<string> | null>(null);
+  const snapshotRequestRef = useRef<Promise<DashboardSnapshot> | null>(null);
+
+  useEffect(() => {
+    onBotEventRef.current = onBotEvent;
+  }, [onBotEvent]);
 
   const pushEquityPoint = useCallback((balance: number) => {
     setEquityCurve((prev) => {
@@ -30,6 +39,20 @@ export function useLiveSnapshot(session: Session | null) {
 
   const applySnapshot = useCallback(
     (snap: DashboardSnapshot) => {
+      const currentOpenSymbols = new Set(snap.positions.map((position) => position.fullSymbol || position.symbol));
+      const previousOpenSymbols = previousOpenSymbolsRef.current;
+      if (previousOpenSymbols) {
+        for (const symbol of previousOpenSymbols) {
+          if (!currentOpenSymbols.has(symbol)) {
+            onBotEventRef.current?.({
+              type: "position.closed",
+              timestamp: Date.now(),
+              payload: { symbol },
+            });
+          }
+        }
+      }
+      previousOpenSymbolsRef.current = currentOpenSymbols;
       setSnapshot(snap);
       pushEquityPoint(snap.account.totalBalance);
       setLastError(null);
@@ -41,93 +64,71 @@ export function useLiveSnapshot(session: Session | null) {
   const refreshSnapshot = useCallback(async () => {
     if (!session) return;
     try {
-      const snap = await fetchSnapshot(session);
+      snapshotRequestRef.current ??= fetchSnapshot(session).finally(() => {
+        snapshotRequestRef.current = null;
+      });
+      const snap = await snapshotRequestRef.current;
       if (mounted.current) applySnapshot(snap);
-    } catch (err: any) {
-      if (mounted.current) setLastError(err.message ?? "Failed to refresh snapshot");
+    } catch (err: unknown) {
+      if (mounted.current) setLastError(getErrorMessage(err, "Failed to refresh snapshot"));
     }
   }, [session, applySnapshot]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const source = new EventSource("/api/operator/bot-events");
+    source.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as BotEvent;
+        onBotEventRef.current?.(event);
+      } catch {
+        // Ignore malformed live messages; snapshot polling remains authoritative.
+      }
+    };
+
+    return () => source.close();
+  }, [session]);
 
   useEffect(() => {
     mounted.current = true;
     if (!session) return;
 
-    let cancelledInitial = false;
-
-    // Initial REST fetch so the UI isn't empty while the socket connects.
-    fetchSnapshot(session)
-      .then((snap) => {
-        if (!cancelledInitial && mounted.current) applySnapshot(snap);
-      })
-      .catch((err) => {
-        if (mounted.current) setLastError(err.message ?? "Failed to load snapshot");
-      });
-
-    function connect() {
+    const poll = async () => {
       if (!mounted.current) return;
-      setConnState((s) => (s === "live" ? s : "connecting"));
-
-      let ws: WebSocket;
       try {
-        const url = wsUrlFrom(session!.baseUrl);
-        // Send the API key via the Sec-WebSocket-Protocol handshake
-        // instead of a query string, so it doesn't end up in server
-        // access logs, proxy logs, or browser history. The bot's
-        // server.ts expects a subprotocol of the form
-        // "dashboard-key.<API_KEY>" and echoes it back to complete
-        // the handshake.
-        const protocols = session!.apiKey
-          ? [`dashboard-key.${session!.apiKey}`]
-          : undefined;
-        ws = protocols ? new WebSocket(url, protocols) : new WebSocket(url);
-      } catch {
-        setConnState("offline");
-        return;
-      }
-      wsRef.current = ws;
-
-      ws.onopen = () => {
+        snapshotRequestRef.current ??= fetchSnapshot(session).finally(() => {
+          snapshotRequestRef.current = null;
+        });
+        const snap = await snapshotRequestRef.current;
         if (!mounted.current) return;
+        applySnapshot(snap);
         setConnState("live");
-        retryDelay.current = 1500;
-      };
-
-      ws.onmessage = (event) => {
+        retryDelay.current = LIVE_POLL_INTERVAL_MS;
+      } catch (err: unknown) {
         if (!mounted.current) return;
-        try {
-          const parsed = JSON.parse(event.data);
-          if (parsed?.type === "snapshot.updated" && parsed.payload) {
-            applySnapshot(parsed.payload as DashboardSnapshot);
-          } else if (parsed?.type) {
-            // Other event types (position.opened, system.halted, etc.) —
-            // consumers can listen via onBotEvent if needed later.
-          }
-        } catch {
-          // ignore malformed frame
-        }
-      };
-
-      ws.onclose = () => {
+        setLastError(getErrorMessage(err, "Failed to load snapshot"));
+        setConnState((state) => (state === "connecting" ? "offline" : "reconnecting"));
+        retryDelay.current = Math.min(
+          Math.max(retryDelay.current, LIVE_POLL_INTERVAL_MS) * 1.6,
+          MAX_RETRY_INTERVAL_MS
+        );
+      } finally {
         if (!mounted.current) return;
-        setConnState("reconnecting");
+        if (retryTimer.current) clearTimeout(retryTimer.current);
         retryTimer.current = setTimeout(() => {
-          retryDelay.current = Math.min(retryDelay.current * 1.6, 15000);
-          connect();
+          retryTimer.current = null;
+          void poll();
         }, retryDelay.current);
-      };
+      }
+    };
 
-      ws.onerror = () => {
-        ws.close();
-      };
-    }
-
-    connect();
+    retryDelay.current = LIVE_POLL_INTERVAL_MS;
+    void poll();
 
     return () => {
-      cancelledInitial = true;
       mounted.current = false;
       if (retryTimer.current) clearTimeout(retryTimer.current);
-      wsRef.current?.close();
     };
   }, [session, applySnapshot]);
 

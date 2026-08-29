@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 import { getSaasDb } from "@/lib/saasDb";
+import { getCopyTradeMinActivationBalanceUSDT } from "@/lib/copyTradeSizing";
 import type { UserDoc, ExchangeKeyDoc, SubscriptionDoc, PerformanceFeeInvoiceDoc } from "@/lib/saasTypes";
 
-async function requireOperator ( req: NextRequest ): Promise<any> {
+async function requireOperator ( req: NextRequest ): Promise<boolean> {
   const token = req.cookies.get( COOKIE_NAME )?.value;
-  return token ? verifySessionToken( token ) : false;
+  return token ? !!await verifySessionToken( token ) : false;
 }
 
 export interface FollowerListItem {
@@ -120,12 +121,16 @@ export async function PATCH ( req: NextRequest ) {
   }
 
   const db = await getSaasDb();
+  const minActivationBalanceUSDT = getCopyTradeMinActivationBalanceUSDT();
 
   if ( copyTradingEnabled ) {
-    const [ user, key, sub ] = await Promise.all( [
+    const [ user, key, sub, pendingInvoice ] = await Promise.all( [
       db.collection<UserDoc>( "users" ).findOne( { _id: objectId } ),
       db.collection<ExchangeKeyDoc>( "exchange_keys" ).findOne( { userId: objectId } ),
       db.collection<SubscriptionDoc>( "subscriptions" ).findOne( { userId: objectId } ),
+      db
+        .collection<PerformanceFeeInvoiceDoc>( "performance_fee_invoices" )
+        .findOne( { userId: objectId, status: { $in: [ "PENDING_APPROVAL", "APPROVED" ] } } ),
     ] );
 
     if ( !user?.emailVerified ) {
@@ -140,9 +145,21 @@ export async function PATCH ( req: NextRequest ) {
         { status: 409 }
       );
     }
+    if ( Number( key.lastKnownBalanceUSDT ?? 0 ) < minActivationBalanceUSDT ) {
+      return NextResponse.json(
+        { error: `This follower needs at least $${ minActivationBalanceUSDT.toFixed( 2 ) } available balance to start copy trading.` },
+        { status: 409 }
+      );
+    }
     if ( sub?.status !== "ACTIVE" ) {
       return NextResponse.json(
         { error: "This follower does not have an active subscription." },
+        { status: 409 }
+      );
+    }
+    if ( pendingInvoice ) {
+      return NextResponse.json(
+        { error: "This follower has an unpaid performance fee invoice." },
         { status: 409 }
       );
     }

@@ -17,11 +17,15 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 
 export { COOKIE_NAME };
 
-function generateToken(): string {
-  return randomBytes(32).toString("hex");
+export interface SessionPayload {
+  userId: string;
 }
 
-export async function createUser(
+function generateToken (): string {
+  return randomBytes( 32 ).toString( "hex" );
+}
+
+export async function createUser (
   email: string,
   password: string,
   displayName: string
@@ -29,12 +33,12 @@ export async function createUser(
   const db = await getSaasDb();
   const normalizedEmail = email.trim().toLowerCase();
 
-  const existing = await db.collection<UserDoc>("users").findOne({ email: normalizedEmail });
-  if (existing) {
-    throw new Error("An account with this email already exists.");
+  const existing = await db.collection<UserDoc>( "users" ).findOne( { email: normalizedEmail } );
+  if ( existing ) {
+    throw new Error( "An account with this email already exists." );
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash( password, 12 );
   const now = new Date();
   const user: UserDoc = {
     email: normalizedEmail,
@@ -44,62 +48,83 @@ export async function createUser(
     role: "follower",
     copyTradingEnabled: false,
     emailVerified: false,
+    hasSeenOnboarding: false,
   };
 
-  const result = await db.collection<UserDoc>("users").insertOne(user as any);
+  const result = await db.collection<UserDoc>( "users" ).insertOne( user );
   return { ...user, _id: result.insertedId };
 }
 
-export async function verifyPassword(
+export async function verifyPassword (
   email: string,
   password: string
 ): Promise<UserDoc | null> {
   const db = await getSaasDb();
   const user = await db
-    .collection<UserDoc>("users")
-    .findOne({ email: email.trim().toLowerCase() });
-  if (!user) return null;
+    .collection<UserDoc>( "users" )
+    .findOne( { email: email.trim().toLowerCase() } );
+  if ( !user ) return null;
 
-  const valid = await bcrypt.compare(password, user.passwordHash);
+  const valid = await bcrypt.compare( password, user.passwordHash );
   return valid ? user : null;
 }
 
-export async function createSession(userId: ObjectId): Promise<{ token: string; expiresAt: Date }> {
+export async function createSession ( userId: ObjectId ): Promise<{ token: string; expiresAt: Date }> {
   const db = await getSaasDb();
   const token = generateToken();
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const expiresAt = new Date( Date.now() + SESSION_TTL_MS );
 
-  await db.collection<SessionDoc>("sessions").insertOne({
+  await db.collection<SessionDoc>( "sessions" ).insertOne( {
     userId,
     token,
     expiresAt,
     createdAt: new Date(),
-  } as any);
+  } );
 
   return { token, expiresAt };
 }
 
-export async function getUserFromSessionToken(token: string): Promise<UserDoc | null> {
-  if (!token) return null;
+/**
+ * Verifies a database-backed session token and returns a standardized payload.
+ * This acts as the SaaS equivalent to the JWT verifySessionToken in auth.ts.
+ */
+export async function verifySessionToken ( token: string ): Promise<SessionPayload | null> {
+  if ( !token ) return null;
+
+  const db = await getSaasDb();
+  const session = await db.collection<SessionDoc>( "sessions" ).findOne( { token } );
+
+  // If no session is found, or it has expired, validation fails
+  if ( !session || session.expiresAt < new Date() ) {
+    return null;
+  }
+
+  return {
+    userId: session.userId.toString(),
+  };
+}
+
+export async function getUserFromSessionToken ( token: string ): Promise<UserDoc | null> {
+  if ( !token ) return null;
   const db = await getSaasDb();
 
-  const session = await db.collection<SessionDoc>("sessions").findOne({ token });
-  if (!session || session.expiresAt < new Date()) return null;
+  const session = await db.collection<SessionDoc>( "sessions" ).findOne( { token } );
+  if ( !session || session.expiresAt < new Date() ) return null;
 
-  const user = await db.collection<UserDoc>("users").findOne({ _id: session.userId });
+  const user = await db.collection<UserDoc>( "users" ).findOne( { _id: session.userId } );
   return user;
 }
 
 /** Revokes a single session — used on logout or password change. */
-export async function revokeSession(token: string): Promise<void> {
+export async function revokeSession ( token: string ): Promise<void> {
   const db = await getSaasDb();
-  await db.collection<SessionDoc>("sessions").deleteOne({ token });
+  await db.collection<SessionDoc>( "sessions" ).deleteOne( { token } );
 }
 
 /** Revokes every session for a user — used on password change or admin suspension. */
-export async function revokeAllUserSessions(userId: ObjectId): Promise<void> {
+export async function revokeAllUserSessions ( userId: ObjectId ): Promise<void> {
   const db = await getSaasDb();
-  await db.collection<SessionDoc>("sessions").deleteMany({ userId });
+  await db.collection<SessionDoc>( "sessions" ).deleteMany( { userId } );
 }
 
 export { SESSION_TTL_MS };

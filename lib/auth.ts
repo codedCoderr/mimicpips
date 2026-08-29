@@ -1,7 +1,12 @@
-import { SignJWT, jwtVerify } from "jose";
+import { SignJWT, jwtVerify, JWTPayload } from "jose";
 
-const COOKIE_NAME = "controlroom_session";
+const COOKIE_NAME = "operator_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
+
+export interface SessionPayload extends JWTPayload {
+  userId?: string;
+  role?: string;
+}
 
 function getSecret (): Uint8Array {
   const secret = process.env.SESSION_SECRET;
@@ -13,20 +18,22 @@ function getSecret (): Uint8Array {
   return new TextEncoder().encode( secret );
 }
 
-export async function createSessionToken (): Promise<string> {
-  return new SignJWT( { role: "operator" } )
+export async function createSessionToken(userId = "operator"): Promise<string> {
+  return new SignJWT({ userId, role: "operator" })
     .setProtectedHeader( { alg: "HS256" } )
+    .setSubject( userId ) // Sets "sub" claim as standard fallback
     .setIssuedAt()
     .setExpirationTime( `${ SESSION_TTL_SECONDS }s` )
     .sign( getSecret() );
 }
 
-export async function verifySessionToken ( token: string ): Promise<boolean> {
+export async function verifySessionToken ( token: string ): Promise<SessionPayload | null> {
   try {
-    await jwtVerify( token, getSecret() );
-    return true;
+    const { payload } = await jwtVerify( token, getSecret() );
+    if ( payload.role !== "operator" ) return null;
+    return payload as SessionPayload;
   } catch {
-    return false;
+    return null;
   }
 }
 

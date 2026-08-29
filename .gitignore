@@ -1,0 +1,8 @@
+.env
+./node_modules
+./credentials/password.hash
+node_modules
+.env.local
+password.hash
+.next
+.credentials

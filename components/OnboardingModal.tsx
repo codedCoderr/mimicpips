@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   X,
@@ -21,37 +21,29 @@ import { LEGAL_DOCS } from "@/lib/legalConstants";
 
 type LegalDocType = "risk" | "terms" | "privacy" | null;
 
+interface SystemBaseline {
+  days: number;
+  totalTrades: number;
+  historicalWinRatePct: number | null;
+  maxDrawdownPct: number | null;
+  riskPerTradePct: number | null;
+  maxAccountExposurePct: number | null;
+  maxPositions: number | null;
+  marginMode: string | null;
+  minCopyTradeNotionalUSDT?: number;
+  minActivationBalanceUSDT?: number;
+  warnBalanceUSDT?: number;
+  pauseBalanceUSDT?: number;
+  minOrderNotionalUSDT?: number;
+}
+
 interface OnboardingModalProps {
   onDismiss: () => void;
   riskDisclosureAccepted?: boolean;
 }
 
 const REFERRAL_CODE = "59941578";
-const REFERRAL_LINK = `[https://accounts.binance.com/register?ref=$](https://accounts.binance.com/register?ref=$){REFERRAL_CODE}`;
-
-const METRICS = [
-  {
-    label: "Historical Win Rate",
-    value: "68.4%",
-    sub: "Past 180 days (Simulated/Live)",
-    icon: TrendingUp,
-    color: "var(--long)",
-  },
-  {
-    label: "Risk Per Trade",
-    value: "1.0% – 2.0%",
-    sub: "Strict stop-loss bounds",
-    icon: Percent,
-    color: "var(--warn)",
-  },
-  {
-    label: "Max Drawdown",
-    value: "14.2%",
-    sub: "Historical peak-to-trough",
-    icon: Activity,
-    color: "var(--muted)",
-  },
-];
+const REFERRAL_LINK = `https://accounts.binance.com/register?ref=${ REFERRAL_CODE }`;
 
 const STEPS = [
   {
@@ -60,7 +52,7 @@ const STEPS = [
   },
   {
     title: "Open API Management",
-    body: 'Click your profile icon (top right) → "API Management". Or go directly to [binance.com/en/my/settings/api-management](https://binance.com/en/my/settings/api-management).',
+    body: 'Click your profile icon (top right) → "API Management". Or go directly to binance.com/en/my/settings/api-management.',
   },
   {
     title: "Create a new API key",
@@ -89,8 +81,25 @@ const STEPS = [
   },
 ];
 
+function formatPercent ( value: number | null | undefined, fallback: string ): string {
+  return typeof value === "number" && Number.isFinite( value )
+    ? `${ value.toFixed( 1 ) }%`
+    : fallback;
+}
+
+function fmtUsd ( value: number ): string {
+  return `$${ value.toLocaleString( "en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  } ) }`;
+}
+
 export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }: OnboardingModalProps ) {
   const router = useRouter();
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const legalModalRef = useRef<HTMLDivElement | null>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [ modalStep, setModalStep ] = useState<"disclaimer" | "instructions">(
     riskDisclosureAccepted ? "instructions" : "disclaimer"
@@ -101,11 +110,99 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
   const [ dismissing, setDismissing ] = useState( false );
   const [ errorMsg, setErrorMsg ] = useState<string | null>( null );
   const [ copiedCode, setCopiedCode ] = useState( false );
+  const [ baseline, setBaseline ] = useState<SystemBaseline | null>( null );
+  const [ baselineLoading, setBaselineLoading ] = useState( true );
+  const [ baselineError, setBaselineError ] = useState<string | null>( null );
+  const minActivationBalanceUSDT = baseline?.minActivationBalanceUSDT ?? baseline?.minCopyTradeNotionalUSDT ?? 300;
+  const warnBalanceUSDT = baseline?.warnBalanceUSDT ?? 250;
+  const pauseBalanceUSDT = baseline?.pauseBalanceUSDT ?? 150;
+  const minOrderNotionalUSDT = baseline?.minOrderNotionalUSDT ?? 25;
+
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    modalRef.current?.focus();
+
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      previouslyFocused.current?.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadBaseline () {
+      setBaselineLoading( true );
+      setBaselineError( null );
+      try {
+        const res = await fetch( "/api/saas/system-baseline?days=180", {
+          signal: controller.signal,
+          cache: "no-store",
+        } );
+        if ( !res.ok ) throw new Error( "Failed to load baseline" );
+        const data = ( await res.json() ) as SystemBaseline;
+        setBaseline( data );
+      } catch ( error ) {
+        if ( error instanceof DOMException && error.name === "AbortError" ) return;
+        setBaselineError( "Current baseline unavailable" );
+      } finally {
+        if ( !controller.signal.aborted ) setBaselineLoading( false );
+      }
+    }
+
+    void loadBaseline();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const container = activeLegalModal ? legalModalRef.current : modalRef.current;
+    container?.focus();
+  }, [activeLegalModal]);
+
+  function keepFocusInside(
+    event: React.KeyboardEvent<HTMLDivElement>,
+    container: HTMLDivElement | null,
+    onEscape: () => void
+  ) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onEscape();
+      return;
+    }
+    if (event.key !== "Tab" || !container) return;
+
+    const focusable = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    );
+    if (focusable.length === 0) {
+      event.preventDefault();
+      container.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   function copyReferralCode () {
     navigator.clipboard.writeText( REFERRAL_CODE );
     setCopiedCode( true );
-    setTimeout( () => setCopiedCode( false ), 2000 );
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout( () => {
+      setCopiedCode( false );
+      copiedTimerRef.current = null;
+    }, 2000 );
   }
 
   async function handleAcceptAndContinue () {
@@ -122,7 +219,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
         throw new Error( "Failed to log acceptance" );
       }
       setModalStep( "instructions" );
-    } catch ( err ) {
+    } catch {
       setErrorMsg( "Failed to process acknowledgement. Please try again." );
     } finally {
       setSubmitting( false );
@@ -139,10 +236,64 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
     }
   }
 
+  const metricCards = [
+    {
+      label: "Historical Win Rate",
+      value: baselineLoading
+        ? "Loading..."
+        : baseline && baseline.totalTrades > 0
+          ? formatPercent( baseline.historicalWinRatePct, "Not enough data" )
+          : "Not enough data",
+      sub: baselineLoading
+        ? "Reading live bot history"
+        : baseline
+          ? `${ baseline.totalTrades } closed trade${ baseline.totalTrades === 1 ? "" : "s" } over ${ baseline.days } days`
+          : baselineError ?? "Live baseline unavailable",
+      icon: TrendingUp,
+      color: "var(--long)",
+    },
+    {
+      label: "Risk Per Trade",
+      value: baselineLoading
+        ? "Loading..."
+        : formatPercent( baseline?.riskPerTradePct, "Not configured" ),
+      sub: baseline?.maxAccountExposurePct
+        ? `${ formatPercent( baseline.maxAccountExposurePct, "N/A" ) } max account exposure`
+        : baselineLoading
+          ? "Reading active bot config"
+          : baselineError ?? "Active config unavailable",
+      icon: Percent,
+      color: "var(--warn)",
+    },
+    {
+      label: "Max Drawdown",
+      value: baselineLoading
+        ? "Loading..."
+        : baseline && baseline.totalTrades > 0
+          ? formatPercent( baseline.maxDrawdownPct, "Not enough data" )
+          : "Not enough data",
+      sub: baseline?.marginMode
+        ? `${ baseline.marginMode } margin, ${ baseline.maxPositions ?? "N/A" } max positions`
+        : baselineLoading
+          ? "Reading live bot history"
+          : baselineError ?? "Live baseline unavailable",
+      icon: Activity,
+      color: "var(--muted)",
+    },
+  ];
+
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-        <div className="w-full max-w-[640px] max-h-[88vh] panel-raised flex flex-col">
+        <div
+          ref={modalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="onboarding-title"
+          tabIndex={-1}
+          onKeyDown={(event) => keepFocusInside(event, modalRef.current, () => void handleDismiss(false))}
+          className="w-full max-w-[640px] max-h-[88vh] panel-raised flex flex-col"
+        >
           {/* Header */ }
           <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)] shrink-0">
             <div className="flex items-center gap-2.5">
@@ -151,7 +302,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
               ) : (
                 <KeyRound color="var(--long)" size={ 18 } />
               ) }
-              <span className="font-display font-semibold text-lg">
+              <span id="onboarding-title" className="font-display font-semibold text-lg">
                 { modalStep === "disclaimer" ? "Risk Disclosure & Performance" : "Set up copy trading" }
               </span>
             </div>
@@ -180,7 +331,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                     System Parameters & Historical Baseline
                   </p>
                   <div className="grid grid-cols-3 gap-3">
-                    { METRICS.map( ( item, i ) => {
+                    { metricCards.map( ( item, i ) => {
                       const Icon = item.icon;
                       return (
                         <div
@@ -189,7 +340,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                         >
                           <div className="flex items-center justify-between text-[var(--muted)] mb-1">
                             <span className="text-[11px] font-mono">{ item.label }</span>
-                            <Icon size="{ 14 }" style={ { color: item.color } } />
+                            <Icon size={ 14 } style={ { color: item.color } } />
                           </div>
                           <span className="font-mono text-base font-bold" style={ { color: item.color } }>
                             { item.value }
@@ -218,11 +369,14 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                     <p>
                       <strong className="text-[var(--text)]">4. Non-Custodial Operation:</strong> Your API key retains zero withdrawal permissions. You maintain full ownership and final control of your exchange funds at all times.
                     </p>
+                    <p>
+                      <strong className="text-[var(--text)]">5. Balance Policy:</strong> You need at least { fmtUsd( minActivationBalanceUSDT ) } to start copy trading. Normal drawdown below that does not immediately stop trades, but the system may warn below { fmtUsd( warnBalanceUSDT ) } and pause new entries below { fmtUsd( pauseBalanceUSDT ) }.
+                    </p>
                   </div>
                 </div>
 
                 { errorMsg && (
-                  <p className="text-xs font-mono text-[var(--warn)]">{ errorMsg }</p>
+                  <p role="alert" className="text-xs font-mono text-[var(--warn)]">{ errorMsg }</p>
                 ) }
 
                 { !riskDisclosureAccepted && (
@@ -236,7 +390,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                       />
                       { hasAcceptedRisk && (
                         <div className="w-full h-full bg-[var(--text)] flex items-center justify-center">
-                          <Check className="text-[var(--bg)] stroke-[3]" size="{14}" />
+                          <Check className="text-[var(--bg)] stroke-[3]" size={ 14 } />
                         </div>
                       ) }
                     </div>
@@ -297,7 +451,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                       onClick={ copyReferralCode }
                       className="flex items-center gap-1.5 border border-[var(--hairline-bright)] px-2.5 py-1.5 text-xs font-mono hover:border-[var(--text)] transition-colors"
                     >
-                      { copiedCode ? <Check className="text-[var(--long)]" size="{13}" /> : <Copy size="{13}" /> }
+                      { copiedCode ? <Check className="text-[var(--long)]" size={ 13 } /> : <Copy size={ 13 } /> }
                       <span>{ copiedCode ? "Copied" : REFERRAL_CODE }</span>
                     </button>
                     <a
@@ -306,14 +460,21 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 bg-[var(--text)] text-[var(--bg)] px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--long)] transition-colors"
                     >
-                      Sign Up <ExternalLink size="{12}" />
+                      Sign Up <ExternalLink size={ 12 } />
                     </a>
                   </div>
                 </div>
 
                 <p className="text-sm text-[var(--muted)] leading-relaxed">
-                  Before trades can be copied to your account, you need to connect a Binance API key. This takes about five minutes. Here's exactly how:
+                  Before trades can be copied to your account, you need to connect a Binance API key. This takes about five minutes. Here&apos;s exactly how:
                 </p>
+
+                <div className="flex items-start gap-2 text-xs font-mono text-[var(--warn)] border border-[var(--warn-dim)] bg-[var(--warn-dim)]/10 px-3.5 py-3">
+                  <AlertTriangle className="shrink-0 mt-0.5" size={ 14 } />
+                  <span>
+                    You need at least { fmtUsd( minActivationBalanceUSDT ) } available to turn on copy trading. After that, ordinary losses will not immediately disable you; new entries pause only below { fmtUsd( pauseBalanceUSDT ) }. Individual copied orders below { fmtUsd( minOrderNotionalUSDT ) } may still be skipped to avoid exchange notional errors and fee-heavy executions.
+                  </span>
+                </div>
 
                 <ol className="space-y-4">
                   { STEPS.map( ( step, i ) => (
@@ -341,9 +502,9 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                 </ol>
 
                 <div className="flex items-start gap-2 text-xs font-mono text-[var(--long)] border border-[var(--long-dim)] bg-[var(--long-dim)]/10 px-3.5 py-3">
-                  <ShieldCheck className="shrink-0 mt-0.5" size="{14}" />
+                  <ShieldCheck className="shrink-0 mt-0.5" size={ 14 } />
                   <span>
-                    Your key is verified against Binance directly and encrypted before storage. It's never shown again after you submit it, and any key with withdrawal permission is rejected automatically — this platform can never move your funds out of your account.
+                    Your key is verified against Binance directly and encrypted before storage. It&apos;s never shown again after you submit it, and any key with withdrawal permission is rejected automatically — this platform can never move your funds out of your account.
                   </span>
                 </div>
               </>
@@ -363,7 +524,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
               disabled={ dismissing || submitting }
               className="text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors disabled:opacity-50"
             >
-              { modalStep === "instructions" ? "← Back to Disclaimer" : "I'll do this later" }
+              { modalStep === "instructions" ? "← Back to Disclaimer" : "Do this later" }
             </button>
 
             { modalStep === "disclaimer" ? (
@@ -375,18 +536,18 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
               >
                 { submitting ? (
                   <>
-                    <Loader2 className="animate-spin" size="{15}" />
+                    <Loader2 className="animate-spin" size={ 15 } />
                     Logging Acceptance...
                   </>
                 ) : riskDisclosureAccepted ? (
                   <>
                     Continue
-                    <ArrowRight size="{15}" />
+                    <ArrowRight size={ 15 } />
                   </>
                 ) : (
                   <>
                     I Accept & Continue
-                    <ArrowRight size="{15}" />
+                    <ArrowRight size={ 15 } />
                   </>
                 ) }
               </button>
@@ -398,7 +559,7 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
                            px-4 py-2.5 hover:bg-[var(--long)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Connect my exchange
-                <ArrowRight size="{15}" />
+                <ArrowRight size={ 15 } />
               </button>
             ) }
           </div>
@@ -408,11 +569,19 @@ export function OnboardingModal ( { onDismiss, riskDisclosureAccepted = false }:
       {/* Nested Legal Overlay Modal */ }
       { activeLegalModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-          <div className="w-full max-w-[540px] max-h-[75vh] panel-raised flex flex-col border border-[var(--hairline-bright)] shadow-2xl">
+          <div
+            ref={legalModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="legal-modal-title"
+            tabIndex={-1}
+            onKeyDown={(event) => keepFocusInside(event, legalModalRef.current, () => setActiveLegalModal(null))}
+            className="w-full max-w-[540px] max-h-[75vh] panel-raised flex flex-col border border-[var(--hairline-bright)] shadow-2xl"
+          >
             <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)] shrink-0 bg-[var(--bg)]">
               <div className="flex items-center gap-2.5">
-                <FileText className="text-[var(--long)]" size="{16}" />
-                <span className="font-display font-semibold text-base">
+                <FileText className="text-[var(--long)]" size={ 16 } />
+                <span id="legal-modal-title" className="font-display font-semibold text-base">
                   { LEGAL_DOCS[ activeLegalModal ].title }
                 </span>
               </div>

@@ -7,7 +7,7 @@ import type {
   BacktestJob,
   BacktestJobParams,
 } from "./types";
-import { normalizeBaseUrl, type Session } from "./session";
+import type { Session } from "./session";
 
 export class ApiError extends Error {
   status: number;
@@ -22,14 +22,14 @@ async function call<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  const url = `${normalizeBaseUrl(session.baseUrl)}${path}`;
+  void session;
+  const url = `/api/operator/bot${path}`;
   let res: Response;
   try {
     res = await fetch(url, {
       ...init,
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": session.apiKey,
         ...(init?.headers ?? {}),
       },
     });
@@ -84,15 +84,15 @@ export async function closePosition(
   session: Session,
   symbol: string
 ): Promise<ClosePositionResult> {
-  const url = `${normalizeBaseUrl(session.baseUrl)}/api/positions/${encodeURIComponent(symbol)}/close`;
+  const url = "/api/operator/bot/api/positions/close";
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": session.apiKey,
       },
+      body: JSON.stringify({ symbol }),
     });
   } catch {
     throw new ApiError(
@@ -142,8 +142,7 @@ export function fetchLedgerSummary(
 }
 
 /**
- * Downloads a CSV export by fetching it as a blob (so the auth header can
- * be attached — a plain <a href> can't send X-API-Key) and triggering a
+ * Downloads a CSV export through the same-origin bot proxy and triggers a
  * browser save via a temporary object URL.
  */
 async function downloadCsv(
@@ -151,11 +150,11 @@ async function downloadCsv(
   path: string,
   filename: string
 ): Promise<void> {
-  const url = `${normalizeBaseUrl(session.baseUrl)}${path}`;
+  const url = `/api/operator/bot${path}`;
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { "X-API-Key": session.apiKey },
+      headers: {},
     });
   } catch {
     throw new ApiError(
@@ -198,17 +197,20 @@ export function downloadLedgerSummaryCsv(
   );
 }
 
+export interface RecentTradesPage {
+  trades: RecentTradeRow[];
+  hasMore: boolean;
+}
+
 export async function fetchRecentTrades(
   session: Session,
   limit: number = 10,
-  offset: number = 0 // Added offset parameter
-): Promise<RecentTradeRow[]> {
-  const result = await call<{ trades: RecentTradeRow[] }>(
+  offset: number = 0
+): Promise<RecentTradesPage> {
+  return call<RecentTradesPage>(
     session,
-    // Appended offset to the query string
     `/api/trades/recent?limit=${limit}&offset=${offset}`
   );
-  return result.trades;
 }
 
 export function fetchPerformanceSummary(
@@ -227,14 +229,13 @@ export async function startBacktest(
   session: Session,
   params: BacktestJobParams
 ): Promise<{ started: true; jobId: string } | { started: false; reason: string }> {
-  const url = `${normalizeBaseUrl(session.baseUrl)}/api/backtest/run`;
+  const url = "/api/operator/bot/api/backtest/run";
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": session.apiKey,
       },
       body: JSON.stringify(params),
     });

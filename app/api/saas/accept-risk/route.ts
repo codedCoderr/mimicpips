@@ -1,29 +1,17 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
-import mongoose from "mongoose";
+import { ObjectId } from "mongodb";
 import { getSaasDb } from "@/lib/saasDb";
-import { getSession } from "@/lib/auth";
+import { getUserFromSessionToken, COOKIE_NAME } from "@/lib/saasAuth";
+import { DISCLOSURE_VERSION, getLegalSnapshot } from "@/lib/legalConstants";
 import type { RiskDisclosureLogDoc, UserDoc } from "@/lib/saasTypes";
-
-export const DISCLOSURE_VERSION = "v1.0.0";
-
-// Immutable content snapshot attached to this version log
-export const DISCLOSURE_SNAPSHOT = {
-  riskDisclosure:
-    "Cryptocurrency futures and perpetual contracts carry extreme market volatility and leverage risks. You can lose a substantial portion or the entirety of your allocated balance in a short period. All past performance metrics, historical win rates, and backtested results are provided for informational context only.",
-  termsOfService:
-    "This platform is provided strictly as an automated algorithmic execution tool. It does not provide personalized financial, investment, or legal advice. Under no circumstances shall the platform or its operators be held liable for capital losses, system downtime, order rejection, or indirect damages.",
-  privacyPolicy:
-    "We collect essential account data and API public/secret key pairs required to execute trades. All API keys are encrypted using AES-256-GCM prior to storage in our database. Timestamped risk acceptance events, IP addresses, and user-agent strings are logged strictly for legal compliance and audit defense.",
-};
 
 function getNormalizedIp ( headerList: Headers ): string {
   const forwarded = headerList.get( "x-forwarded-for" );
-  let ip = forwarded
+  const ip = forwarded
     ? forwarded.split( "," )[ 0 ].trim()
     : headerList.get( "x-real-ip" ) || "127.0.0.1";
 
-  // Normalize local IPv6 loopback to IPv4 format for clean local log output
   if ( ip === "::1" || ip === "::ffff:127.0.0.1" ) {
     return "127.0.0.1";
   }
@@ -31,10 +19,16 @@ function getNormalizedIp ( headerList: Headers ): string {
   return ip;
 }
 
-export async function POST () {
+export async function POST(req: Request) {
   try {
-    const session = await getSession();
-    if ( !session?.userId ) {
+    const cookieHeader = req.headers.get("cookie") ?? "";
+    const token = cookieHeader
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${COOKIE_NAME}=`))
+      ?.slice(COOKIE_NAME.length + 1);
+    const user = token ? await getUserFromSessionToken(decodeURIComponent(token)) : null;
+    if (!user?._id) {
       return NextResponse.json( { error: "Unauthorized" }, { status: 401 } );
     }
 
@@ -43,19 +37,20 @@ export async function POST () {
     const userAgent = headerList.get( "user-agent" ) || "unknown";
 
     const db = await getSaasDb();
-    const userObjectId = new mongoose.Types.ObjectId( session.userId );
+    const userObjectId = new ObjectId(user._id);
 
-    // 1. Immutable audit record with full content snapshot
+    // Snapshot matching exact modal popup text
+    const contentSnapshot = getLegalSnapshot();
+
     await db.collection<RiskDisclosureLogDoc>( "risk_disclosure_logs" ).insertOne( {
       userId: userObjectId,
       version: DISCLOSURE_VERSION,
-      contentSnapshot: DISCLOSURE_SNAPSHOT,
+      contentSnapshot,
       ipAddress,
       userAgent,
       acceptedAt: new Date(),
     } );
 
-    // 2. Update user state
     await db.collection<UserDoc>( "users" ).updateOne(
       { _id: userObjectId },
       {
