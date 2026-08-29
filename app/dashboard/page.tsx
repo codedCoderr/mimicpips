@@ -48,10 +48,8 @@ export default function DashboardPage () {
   const router = useRouter();
   const [ session, setSession ] = useState<Session | null>( null );
   const [ ready, setReady ] = useState( false );
-  const [ clientReady, setClientReady ] = useState( false );
 
   useEffect( () => {
-    setClientReady( true );
     const existing = loadSession();
     if ( !existing ) {
       router.replace( "/setup" );
@@ -231,9 +229,9 @@ export default function DashboardPage () {
       <StatusStrip snapshot={ displaySnapshot } connState={ connState } />
 
       <div className="flex-1 p-6">
-        { !clientReady || !displaySnapshot ? (
+        { !displaySnapshot ? (
           <div className="h-[60vh] flex items-center justify-center">
-            <p className="font-mono text-sm text-[var(--muted)] animate-pulse">
+            <p className="font-mono text-sm text-[var(--muted)]">
               Waiting for data from the bot…
             </p>
           </div>
