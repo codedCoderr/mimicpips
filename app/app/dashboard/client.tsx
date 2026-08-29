@@ -32,6 +32,7 @@ interface GateStatus {
 
 interface CopyTradeLogEntry {
   id: string;
+  leaderTradeId?: string;
   action: "OPEN" | "CLOSE";
   symbol: string;
   side: "LONG" | "SHORT";
@@ -116,13 +117,13 @@ function statusColor ( status: string ): string {
   return "var(--muted)";
 }
 
-function statusLabel(status: string): string {
-  if (status === "executed") return "Copied";
-  if (status === "closed") return "Closed";
-  if (status === "failed") return "Needs attention";
-  if (status === "skipped_duplicate") return "Already handled";
-  if (status.startsWith("skipped_")) return "Skipped";
-  if (status === "SUCCESS") return "Copied";
+function statusLabel ( status: string ): string {
+  if ( status === "executed" ) return "Copied";
+  if ( status === "closed" ) return "Closed";
+  if ( status === "failed" ) return "Needs attention";
+  if ( status === "skipped_duplicate" ) return "Already handled";
+  if ( status.startsWith( "skipped_" ) ) return "Skipped";
+  if ( status === "SUCCESS" ) return "Copied";
   return status;
 }
 
@@ -222,9 +223,51 @@ export function CopyTradingDashboardClient ( {
     router.push( "/app/login" );
   }
 
-  // --- Derived Statistics Calculations ---
-  const copiedTrades = logEntries?.filter( e => e.action === "OPEN" && e.status === "executed" ).length ?? 0;
-  const closedTrades = logEntries?.filter( e => e.action === "CLOSE" && e.status === "closed" ) ?? [];
+  // --- Derived Statistics & Deduplication ---
+  // --- Derived Statistics & Deduplication ---
+  const unifiedTrades = ( () => {
+    if ( !logEntries ) return [];
+    const map = new Map<string, any>();
+
+    for ( const entry of logEntries ) {
+      const tradeKey = entry.leaderTradeId || entry.id;
+
+      if ( !map.has( tradeKey ) ) {
+        map.set( tradeKey, {
+          id: entry.id,
+          symbol: entry.symbol,
+          side: entry.side,
+          entryPrice: entry.action === "OPEN" ? entry.entryPrice : 0,
+          exitPrice: entry.action === "CLOSE" ? entry.exitPrice : 0,
+          marginAllocated: entry.marginAllocated,
+          realizedPnl: entry.realizedPnl,
+          roiPercentage: entry.roiPercentage,
+          status: entry.status,
+          detail: entry.detail,
+          executedAt: entry.executedAt || entry.createdAt,
+          isOpen: entry.action === "OPEN",
+        } );
+      }
+
+      const row = map.get( tradeKey )!;
+      if ( entry.action === "OPEN" ) {
+        row.entryPrice = entry.entryPrice || row.entryPrice;
+        row.marginAllocated = entry.marginAllocated || row.marginAllocated;
+      } else if ( entry.action === "CLOSE" || ( entry.exitPrice ?? 0 ) > 0 ) {
+        row.exitPrice = entry.exitPrice || row.exitPrice;
+        row.realizedPnl = entry.realizedPnl;
+        row.roiPercentage = entry.roiPercentage;
+        row.status = entry.status;
+        row.detail = entry.detail || row.detail;
+        row.isOpen = false;
+      }
+    }
+    return Array.from( map.values() );
+  } )();
+
+  const totalCopiedTrades = unifiedTrades.length;
+  const activeTradesCount = unifiedTrades.filter( e => e.isOpen ).length;
+  const closedTrades = unifiedTrades.filter( e => !e.isOpen );
   const netPnl = closedTrades.reduce( ( sum, e ) => sum + ( e.realizedPnl || 0 ), 0 );
   const winningTrades = closedTrades.filter( e => ( e.realizedPnl || 0 ) > 0 ).length;
   const winRate = closedTrades.length > 0 ? ( winningTrades / closedTrades.length ) * 100 : 0;
@@ -375,8 +418,8 @@ export function CopyTradingDashboardClient ( {
           </div>
 
           {/* --- Performance Overview Grid --- */ }
-          { !logLoading && logEntries && logEntries.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          { !logLoading && unifiedTrades.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="panel p-4 flex flex-col gap-1 hover:bg-[var(--panel-raised)] transition-colors">
                 <div className="flex items-center gap-1.5 text-[var(--muted)]">
                   <TrendingUp size={ 14 } />
@@ -406,7 +449,17 @@ export function CopyTradingDashboardClient ( {
                   <span className="text-xs font-mono">Copied Trades</span>
                 </div>
                 <span className="font-display text-xl font-semibold">
-                  { copiedTrades }
+                  { totalCopiedTrades }
+                </span>
+              </div>
+
+              <div className="panel p-4 flex flex-col gap-1 hover:bg-[var(--panel-raised)] transition-colors">
+                <div className="flex items-center gap-1.5 text-[var(--muted)]">
+                  <Zap size={ 14 } />
+                  <span className="text-xs font-mono">Active Trades</span>
+                </div>
+                <span className="font-display text-xl font-semibold">
+                  { activeTradesCount }
                 </span>
               </div>
             </div>
@@ -429,7 +482,7 @@ export function CopyTradingDashboardClient ( {
               </div>
             ) }
 
-            { !logLoading && ( !logEntries || logEntries.length === 0 ) && (
+            { !logLoading && unifiedTrades.length === 0 && (
               <div className="p-8 text-center">
                 <p className="text-sm text-[var(--muted)] font-mono">
                   { enabled
@@ -439,12 +492,12 @@ export function CopyTradingDashboardClient ( {
               </div>
             ) }
 
-            { !logLoading && logEntries && logEntries.length > 0 && (
+            { !logLoading && unifiedTrades.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--hairline)]">
-                      { [ "Symbol", "Action", "Side", "Entry / Exit", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
+                      { [ "Symbol", "Side", "Entry / Exit", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
                         <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">
                           { h }
                         </th>
@@ -452,16 +505,13 @@ export function CopyTradingDashboardClient ( {
                     </tr>
                   </thead>
                   <tbody className="font-mono">
-                    { logEntries.map( ( e ) => (
+                    { unifiedTrades.map( ( e ) => (
                       <tr
                         key={ e.id }
                         className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors text-xs"
                       >
                         <td className="px-4 py-2.5 font-semibold whitespace-nowrap">
                           { ( e.symbol || "UNKNOWN" ).split( ":" )[ 0 ] }
-                        </td>
-                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                          { e.action ?? "OPEN" }
                         </td>
                         <td className="px-4 py-2.5">
                           <span
@@ -480,9 +530,9 @@ export function CopyTradingDashboardClient ( {
                             Out:{ " " }
                             { ( e.exitPrice ?? 0 ) > 0
                               ? fmtUsd( e.exitPrice )
-                              : e.action === "CLOSE"
-                                ? "Closed"
-                                : "Active" }
+                              : e.isOpen
+                                ? "Active"
+                                : "Closed" }
                           </div>
                         </td>
                         <td className="px-4 py-2.5 tabular text-[var(--text)]">
@@ -496,8 +546,8 @@ export function CopyTradingDashboardClient ( {
                             { ( e.realizedPnl ?? 0 ) >= 0 ? "+" : "" }{ fmtUsd( e.realizedPnl ?? 0 ) } ({ ( e.roiPercentage ?? 0 ) >= 0 ? "+" : "" }{ Number( e.roiPercentage ?? 0 ).toFixed( 2 ) }%)
                           </div>
                         </td>
-                        <td className="px-4 py-2.5" style={ { color: statusColor( e.status ) } }>
-                          <div>{ statusLabel( e.status || "SUCCESS" ) }</div>
+                        <td className="px-4 py-2.5" style={ { color: e.isOpen ? "var(--long)" : statusColor( e.status ) } }>
+                          <div>{ e.isOpen ? "Active" : statusLabel( e.status || "SUCCESS" ) }</div>
                           { e.detail && (
                             <div className="max-w-[220px] truncate text-[10px] text-[var(--muted)]" title={ e.detail }>
                               { e.detail }
@@ -505,7 +555,7 @@ export function CopyTradingDashboardClient ( {
                           ) }
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                          { new Date( e.executedAt || e.createdAt ).toLocaleString() }
+                          { new Date( e.executedAt ).toLocaleString() }
                         </td>
                       </tr>
                     ) ) }
