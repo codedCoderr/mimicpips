@@ -1,4 +1,6 @@
 import dotenv from "dotenv";
+// Load standard .env or fallback gracefully depending on your environment
+dotenv.config();
 dotenv.config( { path: ".env.local" } );
 
 import { MongoClient, Db } from "mongodb";
@@ -12,8 +14,20 @@ import { MongoClient, Db } from "mongodb";
  */
 
 const uri = process.env.MONGO_URI || "mongodb://localhost:27017";
+
+function resolveBotDbName (): string {
+  if ( process.env.BOT_DB_NAME?.trim() ) return process.env.BOT_DB_NAME.trim();
+  try {
+    const parsed = new URL( uri );
+    const pathDbName = decodeURIComponent( parsed.pathname.replace( /^\/+/, "" ) );
+    return pathDbName || "trading_bot";
+  } catch {
+    return "trading_bot";
+  }
+}
+
 const SAAS_DB_NAME = process.env.SAAS_DB_NAME || "copytrade_saas";
-const BOT_DB_NAME = process.env.BOT_DB_NAME || "trading_bot";
+const BOT_DB_NAME = resolveBotDbName();
 
 let client: MongoClient | null = null;
 let saasDb: Db | null = null;
