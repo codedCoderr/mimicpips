@@ -6,3 +6,6 @@ node_modules
 password.hash
 .next
 .credentials
+generate-master-key.mjs
+hash-password.mjs
+push-amplify-env.mjs
