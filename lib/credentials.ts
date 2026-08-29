@@ -1,5 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import * as dotenv from "dotenv";
+
+dotenv.config( { path: ".env.local" } );
 
 // Bcrypt hashes are full of `$` characters, which Next.js's built-in env
 // loader (dotenv-expand) treats as variable-reference syntax and silently
@@ -9,20 +12,6 @@ import path from "node:path";
 // let cached: string | null | undefined;
 
 export function getPasswordHash (): string | null {
-  // Check the environment variable directly (works reliably on AWS Amplify)
-  if ( process.env.LOGIN_HASH ) {
-    return process.env.LOGIN_HASH;
-  }
-
-  // Fallback to reading the file if running locally
-  try {
-    const hashPath = path.join( process.cwd(), ".credentials", "password.hash" );
-    if ( fs.existsSync( hashPath ) ) {
-      return fs.readFileSync( hashPath, "utf8" ).trim();
-    }
-  } catch {
-    // Ignore file read errors
-  }
-
-  return null;
+  // Now safely reads the un-mangled hash from the environment
+  return process.env.LOGIN_HASH || null;
 }
