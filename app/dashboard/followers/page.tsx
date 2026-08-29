@@ -80,8 +80,8 @@ function CopyTradeToggle ( {
         onClick={ () => void handleToggle() }
         disabled={ toggleDisabled }
         role="switch"
-        aria-checked={follower.copyTradingEnabled}
-        aria-label={`Toggle copy trading for ${follower.email}`}
+        aria-checked={ follower.copyTradingEnabled }
+        aria-label={ `Toggle copy trading for ${ follower.email }` }
         title={ missingGateReason() }
         className="relative w-10 h-5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         style={ {
@@ -111,12 +111,22 @@ export default function FollowersPage () {
     setLoading( true );
     fetch( "/api/saas/followers" )
       .then( async ( res ) => {
-        const data = await res.json();
-        if ( !res.ok ) throw new Error( data?.error ?? "Failed to load followers." );
-        setFollowers( data.followers );
+        const text = await res.text();
+        let data: { followers?: FollowerListItem[]; error?: string } = {};
+
+        if ( text ) {
+          try {
+            data = JSON.parse( text );
+          } catch {
+            throw new Error( `Invalid response from server (HTTP ${ res.status }).` );
+          }
+        }
+
+        if ( !res.ok ) throw new Error( data?.error ?? `Request failed with status ${ res.status }.` );
+        setFollowers( data.followers ?? [] );
         setError( null );
       } )
-      .catch( ( err ) => setError( err.message ) )
+      .catch( ( err: Error ) => setError( err.message ) )
       .finally( () => setLoading( false ) );
   }, [] );
 
