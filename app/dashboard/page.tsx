@@ -11,8 +11,6 @@ import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
 import { StatusStrip } from "@/components/StatusStrip";
 import { AccountSummary } from "@/components/AccountSummary";
 import { PerformanceSummaryPanel } from "@/components/PerformanceSummaryPanel";
-import { RiskPanel } from "@/components/RiskPanel";
-import { KillSwitch } from "@/components/KillSwitch";
 import { BrandMark } from "@/components/BrandMark";
 
 // Dynamically import heavy UI panels to eliminate layout shift and reduce initial JS bundle size
@@ -36,12 +34,24 @@ const EquityChart = dynamic(
   { ssr: false, loading: () => <div className="h-[300px] panel animate-pulse" /> }
 );
 
+const KillSwitch = dynamic(
+  () => import( "@/components/KillSwitch" ).then( ( mod ) => mod.KillSwitch ),
+  { ssr: false, loading: () => <div className="h-32 panel animate-pulse" /> }
+);
+
+const RiskPanel = dynamic(
+  () => import( "@/components/RiskPanel" ).then( ( mod ) => mod.RiskPanel ),
+  { ssr: false, loading: () => <div className="h-48 panel animate-pulse" /> }
+);
+
 export default function DashboardPage () {
   const router = useRouter();
   const [ session, setSession ] = useState<Session | null>( null );
   const [ ready, setReady ] = useState( false );
+  const [ clientReady, setClientReady ] = useState( false );
 
   useEffect( () => {
+    setClientReady( true );
     const existing = loadSession();
     if ( !existing ) {
       router.replace( "/setup" );
@@ -221,9 +231,9 @@ export default function DashboardPage () {
       <StatusStrip snapshot={ displaySnapshot } connState={ connState } />
 
       <div className="flex-1 p-6">
-        { !displaySnapshot ? (
+        { !clientReady || !displaySnapshot ? (
           <div className="h-[60vh] flex items-center justify-center">
-            <p className="font-mono text-sm text-[var(--muted)]">
+            <p className="font-mono text-sm text-[var(--muted)] animate-pulse">
               Waiting for data from the bot…
             </p>
           </div>
