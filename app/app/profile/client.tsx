@@ -37,6 +37,7 @@ export function ProfilePageClient ( {
         <div className="flex items-center gap-3">
           <button
             onClick={ () => router.push( "/app/dashboard" ) }
+            aria-label="Back to dashboard"
             className="text-[var(--muted)] hover:text-[var(--text)] transition-colors"
           >
             <ArrowLeft size={ 16 } />

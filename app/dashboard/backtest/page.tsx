@@ -223,8 +223,9 @@ export default function BacktestPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <label className="eyebrow block mb-1.5">Symbol</label>
+                <label htmlFor="bt-symbol" className="eyebrow block mb-1.5">Symbol</label>
                 <input
+                  id="bt-symbol"
                   value={symbol}
                   onChange={(e) => setSymbol(e.target.value.toUpperCase())}
                   placeholder="BOME/USDT"
@@ -234,12 +235,13 @@ export default function BacktestPage() {
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="eyebrow block">Candles</label>
+                  <label htmlFor="bt-candles" className="eyebrow block">Candles</label>
                   <span className="text-[10px] font-mono text-[var(--muted)]">
                     {formatCandleDuration(candles, timeframe)}
                   </span>
                 </div>
                 <input
+                  id="bt-candles"
                   type="number"
                   value={candles}
                   onChange={(e) => setCandles(Number(e.target.value))}
@@ -250,8 +252,9 @@ export default function BacktestPage() {
                 />
               </div>
               <div>
-                <label className="eyebrow block mb-1.5">Timeframe</label>
+                <label htmlFor="bt-timeframe" className="eyebrow block mb-1.5">Timeframe</label>
                 <select
+                  id="bt-timeframe"
                   value={timeframe}
                   onChange={(e) => setTimeframe(e.target.value)}
                   className="w-full bg-[var(--panel)] border border-[var(--hairline)] px-3 py-2 text-sm font-mono
@@ -289,8 +292,9 @@ export default function BacktestPage() {
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div>
-                  <label className="eyebrow block mb-1.5">{fieldLabel("stPeriod")}</label>
+                  <label htmlFor="bt-stPeriod" className="eyebrow block mb-1.5">{fieldLabel("stPeriod")}</label>
                   <input
+                    id="bt-stPeriod"
                     type="number"
                     value={stPeriod}
                     onChange={(e) => setStPeriod(Number(e.target.value))}
@@ -300,8 +304,9 @@ export default function BacktestPage() {
                   />
                 </div>
                 <div>
-                  <label className="eyebrow block mb-1.5">{fieldLabel("stMult")}</label>
+                  <label htmlFor="bt-stMult" className="eyebrow block mb-1.5">{fieldLabel("stMult")}</label>
                   <input
+                    id="bt-stMult"
                     type="number"
                     value={stMult}
                     onChange={(e) => setStMult(Number(e.target.value))}
@@ -311,8 +316,9 @@ export default function BacktestPage() {
                   />
                 </div>
                 <div>
-                  <label className="eyebrow block mb-1.5">{fieldLabel("adxMin")}</label>
+                  <label htmlFor="bt-adxMin" className="eyebrow block mb-1.5">{fieldLabel("adxMin")}</label>
                   <input
+                    id="bt-adxMin"
                     type="number"
                     value={adxMin}
                     onChange={(e) => setAdxMin(Number(e.target.value))}
@@ -326,8 +332,9 @@ export default function BacktestPage() {
               {exitMode === "fixed_tp" && (
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="eyebrow block mb-1.5">{fieldLabel("tp1Pct")}</label>
+                    <label htmlFor="bt-tp1Pct" className="eyebrow block mb-1.5">{fieldLabel("tp1Pct")}</label>
                     <input
+                      id="bt-tp1Pct"
                       type="number"
                       value={tp1Pct}
                       onChange={(e) => setTp1Pct(Number(e.target.value))}
@@ -337,8 +344,9 @@ export default function BacktestPage() {
                     />
                   </div>
                   <div>
-                    <label className="eyebrow block mb-1.5">{fieldLabel("tp2Pct")}</label>
+                    <label htmlFor="bt-tp2Pct" className="eyebrow block mb-1.5">{fieldLabel("tp2Pct")}</label>
                     <input
+                      id="bt-tp2Pct"
                       type="number"
                       value={tp2Pct}
                       onChange={(e) => setTp2Pct(Number(e.target.value))}
@@ -348,8 +356,9 @@ export default function BacktestPage() {
                     />
                   </div>
                   <div>
-                    <label className="eyebrow block mb-1.5">{fieldLabel("tp3Pct")}</label>
+                    <label htmlFor="bt-tp3Pct" className="eyebrow block mb-1.5">{fieldLabel("tp3Pct")}</label>
                     <input
+                      id="bt-tp3Pct"
                       type="number"
                       value={tp3Pct}
                       onChange={(e) => setTp3Pct(Number(e.target.value))}

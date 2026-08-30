@@ -322,7 +322,16 @@ export default function FollowersPage () {
             </div>
           ) }
 
-          { followers && (
+          { followers === null ? (
+            <div className="grid grid-cols-3 gap-px bg-[var(--hairline)]">
+              { Array.from( { length: 3 } ).map( ( _, i ) => (
+                <div key={ i } className="panel p-4 space-y-2">
+                  <div className="h-2.5 w-24 bg-[var(--panel-raised)] animate-pulse" />
+                  <div className="h-6 w-10 bg-[var(--panel-raised)] animate-pulse" />
+                </div>
+              ) ) }
+            </div>
+          ) : (
             <div className="grid grid-cols-3 gap-px bg-[var(--hairline)]">
               <div className="panel p-4">
                 <span className="eyebrow block mb-1">Total followers</span>
@@ -359,6 +368,12 @@ export default function FollowersPage () {
               <span className="eyebrow">All followers</span>
               { loading && <Loader2 size={ 14 } className="animate-spin text-[var(--muted)]" /> }
             </div>
+
+            { loading && followers === null && (
+              <div className="p-8 flex items-center justify-center">
+                <div className="h-3 w-40 bg-[var(--panel-raised)] animate-pulse" />
+              </div>
+            ) }
 
             { !loading && followers && followers.length === 0 && (
               <div className="p-8 text-center">
