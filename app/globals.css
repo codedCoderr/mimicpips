@@ -8,7 +8,9 @@
   --hairline-bright: #33373f;
   --text: #e8e9eb;
   --muted: #7a7f87;
-  --muted-dim: #52565d;
+  --muted-dim: #868b93; /* lightened from #52565d — the old value was ~2.5:1 against panel
+                            backgrounds, failing WCAG AA (4.5:1) for the fine-print text it's
+                            used on. This passes ~4.6:1+ against --bg/--panel/--panel-raised. */
 
   --long: #3dd68c;
   --long-dim: #1f6b46;

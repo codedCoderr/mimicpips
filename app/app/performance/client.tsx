@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Crosshair, TrendingUp, BarChart3, Activity, LogOut, Receipt, User } from "lucide-react";
+import { ArrowLeft, Crosshair, TrendingUp, BarChart3, Activity, LogOut, Receipt, User } from "lucide-react";
 
 type DurationFilter = "7D" | "1M" | "3M" | "1Y" | "ALL";
 
@@ -65,6 +65,7 @@ export function PerformanceClient () {
         <div className="flex items-center gap-3">
           <button
             onClick={ () => router.push( "/app/dashboard" ) }
+            aria-label="Back to dashboard"
             className="text-[var(--muted)] hover:text-[var(--text)] transition-colors"
           >
             <ArrowLeft size={ 16 } />
@@ -165,8 +166,16 @@ export function PerformanceClient () {
             </div>
 
             { loading ? (
-              <div className="p-8 flex items-center justify-center">
-                <Loader2 size={ 16 } className="animate-spin text-[var(--muted)]" />
+              <div className="divide-y divide-[var(--hairline)]">
+                { Array.from( { length: 6 } ).map( ( _, i ) => (
+                  <div key={ i } className="px-4 py-3 flex items-center gap-4">
+                    <div className="h-3 w-14 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-10 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-20 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-20 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-12 bg-[var(--panel-raised)] animate-pulse ml-auto" />
+                  </div>
+                ) ) }
               </div>
             ) : trades.length === 0 ? (
               <div className="p-8 text-center">

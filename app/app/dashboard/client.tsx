@@ -110,6 +110,15 @@ function GateRow ( { label, met, tip, actionUrl, onNavigate }: GateRowProps ) {
   );
 }
 
+function GateRowSkeleton () {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-[var(--hairline)] last:border-b-0">
+      <div className="h-3 w-32 bg-[var(--panel-raised)] animate-pulse" />
+      <div className="h-3 w-12 bg-[var(--panel-raised)] animate-pulse" />
+    </div>
+  );
+}
+
 function statusColor ( status: string ): string {
   if ( status === "executed" || status === "closed" || status === "SUCCESS" ) return "var(--long)";
   if ( status === "failed" ) return "var(--short)";
@@ -335,7 +344,11 @@ export function CopyTradingDashboardClient ( {
               </span>
             </div>
 
-            { gates && (
+            { gates === null ? (
+              <div>
+                { Array.from( { length: 5 } ).map( ( _, i ) => <GateRowSkeleton key={ i } /> ) }
+              </div>
+            ) : (
               <div>
                 <GateRow
                   label="Email verified"
@@ -418,7 +431,16 @@ export function CopyTradingDashboardClient ( {
           </div>
 
           {/* --- Performance Overview Grid --- */ }
-          { !logLoading && unifiedTrades.length > 0 && (
+          { logLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              { Array.from( { length: 4 } ).map( ( _, i ) => (
+                <div key={ i } className="panel p-4 flex flex-col gap-2">
+                  <div className="h-3 w-20 bg-[var(--panel-raised)] animate-pulse" />
+                  <div className="h-5 w-16 bg-[var(--panel-raised)] animate-pulse" />
+                </div>
+              ) ) }
+            </div>
+          ) : unifiedTrades.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="panel p-4 flex flex-col gap-1 hover:bg-[var(--panel-raised)] transition-colors">
                 <div className="flex items-center gap-1.5 text-[var(--muted)]">
@@ -465,14 +487,22 @@ export function CopyTradingDashboardClient ( {
             </div>
           ) }
 
+
           <div className="panel overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--hairline)]">
               <span className="eyebrow">Recent copy-trade activity</span>
             </div>
 
             { logLoading && (
-              <div className="p-8 flex items-center justify-center">
-                <Loader2 size={ 16 } className="animate-spin text-[var(--muted)]" />
+              <div className="divide-y divide-[var(--hairline)]">
+                { Array.from( { length: 6 } ).map( ( _, i ) => (
+                  <div key={ i } className="px-4 py-3 flex items-center gap-4">
+                    <div className="h-3 w-14 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-10 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-24 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-16 bg-[var(--panel-raised)] animate-pulse ml-auto" />
+                  </div>
+                ) ) }
               </div>
             ) }
 

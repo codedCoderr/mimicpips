@@ -242,6 +242,7 @@ export default function BillingPage () {
         <div className="flex items-center gap-3">
           <button
             onClick={ () => router.push( "/app/dashboard" ) }
+            aria-label="Back to dashboard"
             className="text-[var(--muted)] hover:text-[var(--text)] transition-colors"
           >
             <ArrowLeft size={ 16 } />
@@ -286,8 +287,10 @@ export default function BillingPage () {
             <span className="eyebrow">Subscription</span>
 
             { subLoading ? (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 size={ 18 } className="animate-spin text-[var(--muted)]" />
+              <div className="space-y-2 py-1">
+                <div className="h-4 w-24 bg-[var(--panel-raised)] animate-pulse" />
+                <div className="h-3 w-full bg-[var(--panel-raised)] animate-pulse" />
+                <div className="h-3 w-2/3 bg-[var(--panel-raised)] animate-pulse" />
               </div>
             ) : normalizedStatus === "ACTIVE" ? (
               <>
@@ -394,8 +397,17 @@ export default function BillingPage () {
             ) }
 
             { !error && invoices === null && (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 size={ 16 } className="animate-spin text-[var(--muted)]" />
+              <div className="panel p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="h-3 w-28 bg-[var(--panel-raised)] animate-pulse" />
+                  <div className="h-4 w-20 bg-[var(--panel-raised)] animate-pulse" />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="h-3 w-full bg-[var(--panel-raised)] animate-pulse" />
+                  <div className="h-3 w-full bg-[var(--panel-raised)] animate-pulse" />
+                  <div className="h-3 w-3/4 bg-[var(--panel-raised)] animate-pulse" />
+                </div>
+                <div className="h-9 w-full bg-[var(--panel-raised)] animate-pulse" />
               </div>
             ) }
 
