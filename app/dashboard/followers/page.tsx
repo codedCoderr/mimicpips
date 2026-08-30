@@ -370,16 +370,8 @@ export default function FollowersPage () {
             </div>
 
             { loading && followers === null && (
-              <div className="divide-y divide-[var(--hairline)]">
-                { Array.from( { length: 6 } ).map( ( _, i ) => (
-                  <div key={ i } className="px-4 py-3 flex items-center gap-4">
-                    <div className="h-3 w-20 bg-[var(--panel-raised)] animate-pulse" />
-                    <div className="h-3 w-28 bg-[var(--panel-raised)] animate-pulse" />
-                    <div className="h-3 w-16 bg-[var(--panel-raised)] animate-pulse" />
-                    <div className="h-3 w-16 bg-[var(--panel-raised)] animate-pulse" />
-                    <div className="h-3 w-10 bg-[var(--panel-raised)] animate-pulse ml-auto" />
-                  </div>
-                ) ) }
+              <div className="p-8 flex items-center justify-center">
+                <div className="h-3 w-40 bg-[var(--panel-raised)] animate-pulse" />
               </div>
             ) }
 
