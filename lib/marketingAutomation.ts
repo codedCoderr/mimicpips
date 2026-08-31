@@ -1,6 +1,7 @@
 import { ObjectId, type Db } from "mongodb";
 import { getSaasDb } from "@/lib/saasDb";
 import { sendTelegramPublicMessage } from "@/lib/telegram";
+import { formatTelegramMarketingSignal } from "@/lib/telegramMarketingFormat";
 
 type MarketingEventType =
   | "monthly_gain_milestone"
@@ -42,38 +43,6 @@ function fmtUsd(value: number): string {
 
 function fmtPct(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
-}
-
-export function formatTelegramMarketingSignal(event: {
-  type: string;
-  title: string;
-  summary: string;
-  metricLabel?: string;
-  metricValue?: string;
-}): string {
-  const label = event.type.replace(/_/g, " ").toUpperCase();
-  const metric = event.metricValue
-    ? [`KEY METRIC`, `${event.metricLabel || "Signal"}: ${event.metricValue}`].join("\n")
-    : "";
-
-  return [
-    "MIMIC PIPS SIGNAL DESK",
-    label,
-    "",
-    event.title,
-    "",
-    event.summary,
-    metric ? `\n${metric}` : "",
-    "",
-    "SYSTEM STATUS",
-    "Risk Guard: Active",
-    "Copy Engine: Monitoring",
-    "Execution Rules: Enforced",
-    "",
-    "This is not financial advice. Futures trading carries risk.",
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 async function realizedPnlStats(db: Db, since: Date) {

@@ -32,10 +32,6 @@ function getTelegramConfig() {
   return { token, publicChannelId };
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[char] ?? char));
-}
-
 function telegramFriendlyError(description: string | undefined, publicChannelId: string): string {
   const lower = description?.toLowerCase() ?? "";
   if (lower.includes("not found")) {
@@ -53,14 +49,14 @@ function telegramFriendlyError(description: string | undefined, publicChannelId:
   return description ?? "Telegram send failed.";
 }
 
-export async function sendTelegramPublicMessage(text: string): Promise<TelegramSendResult> {
+export async function sendTelegramPublicMessage(html: string): Promise<TelegramSendResult> {
   const { token, publicChannelId } = getTelegramConfig();
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: publicChannelId,
-      text: escapeHtml(text.slice(0, 3900)),
+      text: html.slice(0, 3900),
       parse_mode: "HTML",
       disable_web_page_preview: true,
     }),

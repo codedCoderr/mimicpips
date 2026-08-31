@@ -3,8 +3,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LogOut,
-  User,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -19,7 +17,7 @@ import {
   AlertTriangle,
   Download
 } from "lucide-react";
-import { BrandMark } from "@/components/BrandMark";
+import { FollowerHeader } from "@/components/FollowerHeader";
 
 interface GateStatus {
   emailVerified: boolean;
@@ -311,10 +309,6 @@ export function CopyTradingDashboardClient ( {
     }
   }
 
-  async function handleSignOut () {
-    await fetch( "/api/saas/logout", { method: "POST" } ).catch( () => { } );
-    router.push( "/app/login" );
-  }
 
   async function handleGeneratePnlCard () {
     setCardGenerating( true );
@@ -471,45 +465,7 @@ export function CopyTradingDashboardClient ( {
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <BrandMark label="Mimic Pips" />
-        <div className="flex items-center gap-3">
-          <button
-            onClick={ () => router.push( "/app/profile" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <User size={ 13 } />
-            Profile
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-
-          <button
-            onClick={ () => router.push( "/app/billing" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <User size={ 13 } />
-            Billing
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-
-          <button
-            onClick={ () => router.push( "/app/performance" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <User size={ 13 } />
-            Performance
-          </button>
-
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <button
-            onClick={ () => void handleSignOut() }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <LogOut size={ 13 } />
-            Sign out
-          </button>
-        </div>
-      </header>
+      <FollowerHeader />
 
       <div className="flex-1 p-6">
         <div className="max-w-[700px] mx-auto space-y-6">

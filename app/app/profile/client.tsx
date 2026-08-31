@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { LogOut, Link2, CreditCard, Mail, Loader2, User, ArrowLeft } from "lucide-react";
+import { Link2, Mail, Loader2 } from "lucide-react";
+import { FollowerHeader } from "@/components/FollowerHeader";
 import { OnboardingModal } from "@/components/OnboardingModal";
 
 export function ProfilePageClient ( {
@@ -32,57 +33,12 @@ export function ProfilePageClient ( {
       body: JSON.stringify( { type: "profile_view", metadata: { surface: "profile" } } ),
     } ).catch( () => {} );
   }, [] );
-  async function handleSignOut () {
-    await fetch( "/api/saas/logout", { method: "POST" } ).catch( () => { } );
-    router.push( "/app/login" );
-  }
 
   return (
     <main className="min-h-screen flex flex-col">
       { showOnboarding && <OnboardingModal onDismiss={ () => setShowOnboarding( false ) } /> }
 
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={ () => router.push( "/app/dashboard" ) }
-            aria-label="Back to dashboard"
-            className="text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <ArrowLeft size={ 16 } />
-          </button>
-          <div className="flex items-center gap-2.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-[var(--long)]" />
-            <span className="font-display font-semibold text-lg">Profile</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-
-
-          <button
-            onClick={ () => router.push( "/app/billing" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <CreditCard size={ 13 } />
-            Billing
-          </button> <div className="w-px h-4 bg-[var(--hairline)]" /><button
-            onClick={ () => router.push( "/app/performance" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            {/* Tip: Use <History size={13} /> or <FileText size={13} /> here if available instead of <User /> */ }
-            <User size={ 13 } />
-            Performance
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <button
-            onClick={ () => void handleSignOut() }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <LogOut size={ 13 } />
-            Sign out
-          </button>
-        </div>
-      </header>
+      <FollowerHeader />
 
       <div className="flex-1 p-6">
         <div className="max-w-[700px] mx-auto space-y-6">

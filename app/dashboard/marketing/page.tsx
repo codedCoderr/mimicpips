@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Megaphone, Loader2, Sparkles, AlertTriangle, Send } from "lucide-react";
+import { Loader2, Sparkles, AlertTriangle, Send } from "lucide-react";
+import { OperatorHeader } from "@/components/OperatorHeader";
+import { formatTelegramMarketingSignal } from "@/lib/telegramMarketingFormat";
 
 type MarketingEvent = {
   id: string;
@@ -50,25 +51,7 @@ function bandColor ( band: string ): string {
 }
 
 function telegramCopy ( event: MarketingEvent ): string {
-  const label = event.type.replace( /_/g, " " ).toUpperCase();
-  const metric = event.metricValue ? [ "KEY METRIC", `${ event.metricLabel || "Signal" }: ${ event.metricValue }` ].join( "\n" ) : "";
-
-  return [
-    "MIMIC PIPS SIGNAL DESK",
-    label,
-    "",
-    event.title,
-    "",
-    event.summary,
-    metric ? `\n${ metric }` : "",
-    "",
-    "SYSTEM STATUS",
-    "Risk Guard: Active",
-    "Copy Engine: Monitoring",
-    "Execution Rules: Enforced",
-    "",
-    "This is not financial advice. Futures trading carries risk.",
-  ].filter( Boolean ).join( "\n" );
+  return formatTelegramMarketingSignal(event);
 }
 
 class UiRequestError extends Error {
@@ -107,7 +90,6 @@ function showRequestError ( err: unknown, setError: ( value: string | null ) => 
 }
 
 export default function MarketingSignalsPage () {
-  const router = useRouter();
   const [ events, setEvents ] = useState<MarketingEvent[]>( [] );
   const [ opportunities, setOpportunities ] = useState<RetentionOpportunity[]>( [] );
   const [ loading, setLoading ] = useState( true );
@@ -305,19 +287,9 @@ export default function MarketingSignalsPage () {
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button type="button" onClick={ () => router.push( "/dashboard" ) } aria-label="Back to dashboard" className="text-[var(--muted)] hover:text-[var(--text)] transition-colors">
-            <ArrowLeft size={ 16 } />
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <div className="flex items-center gap-2">
-            <Megaphone size={ 16 } />
-            <span className="font-display font-semibold text-lg">Marketing Signals</span>
-          </div>
-        </div>
-        { loading && <Loader2 size={ 14 } className="animate-spin text-[var(--muted)]" /> }
-      </header>
+      <OperatorHeader
+        status={ loading ? <Loader2 size={ 14 } className="animate-spin text-[var(--muted)]" /> : null }
+      />
 
       <div className="flex-1 p-6">
         <div className="max-w-[1200px] mx-auto space-y-6">
@@ -352,7 +324,7 @@ export default function MarketingSignalsPage () {
           <section className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
             <div className="panel overflow-hidden">
               <div className="px-5 py-3 border-b border-[var(--hairline)] flex items-center justify-between"><span className="eyebrow">Retention opportunities</span><AlertTriangle size={ 14 } className="text-[var(--warn)]" /></div>
-              { opportunities.length === 0 ? <div className="p-8 text-center text-sm font-mono text-[var(--muted)]">No urgent retention signals right now.</div> : <div className="divide-y divide-[var(--hairline)]">{ opportunities.map( ( opp ) => <article key={ opp.userId } className="p-5 space-y-3 hover:bg-[var(--panel-raised)] transition-colors"><div className="flex items-start justify-between gap-4"><div><h2 className="font-display font-semibold">{ opp.displayName }</h2><p className="text-xs font-mono text-[var(--muted)]">{ opp.email }</p></div><span className="text-[10px] font-semibold px-1.5 py-0.5 whitespace-nowrap" style={ { color: bandColor( opp.band ), border: `1px solid ${ bandColor( opp.band ) }` } }>{ opp.score }/100 { opp.band.replace( /_/g, " " ).toUpperCase() }</span></div><p className="text-sm text-[var(--muted)] leading-relaxed">{ opp.recommendedAction }</p><div className="text-xs font-mono text-[var(--muted-dim)] space-y-1">{ opp.drivers.slice( 0, 3 ).map( ( driver ) => <p key={ driver }>{ driver }</p> ) }</div><div className="bg-[var(--panel)] border border-[var(--hairline)] p-3 text-xs font-mono text-[var(--muted)] leading-relaxed">{ opp.suggestedMessage }</div><div className="flex flex-wrap gap-3"><button type="button" onClick={ () => draftFromOpportunity( opp ) } className="text-xs font-mono text-[var(--long)] hover:text-[var(--text)] transition-colors">Use as campaign draft</button><button type="button" disabled={ sendingKey === opp.userId } onClick={ () => void sendRetentionEmail( opp ) } className="text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors disabled:opacity-50">{ sendingKey === opp.userId ? "Sending..." : "Send email" }</button></div></article> ) }</div> }
+              { opportunities.length === 0 ? <div className="p-8 text-center text-sm font-mono text-[var(--muted)]">No urgent retention signals right now.</div> : <div className="divide-y divide-[var(--hairline)] max-h-[720px] overflow-y-auto">{ opportunities.map( ( opp ) => <article key={ opp.userId } className="p-5 space-y-3 hover:bg-[var(--panel-raised)] transition-colors"><div className="flex items-start justify-between gap-4"><div><h2 className="font-display font-semibold">{ opp.displayName }</h2><p className="text-xs font-mono text-[var(--muted)]">{ opp.email }</p></div><span className="text-[10px] font-semibold px-1.5 py-0.5 whitespace-nowrap" style={ { color: bandColor( opp.band ), border: `1px solid ${ bandColor( opp.band ) }` } }>{ opp.score }/100 { opp.band.replace( /_/g, " " ).toUpperCase() }</span></div><p className="text-sm text-[var(--muted)] leading-relaxed">{ opp.recommendedAction }</p><div className="text-xs font-mono text-[var(--muted-dim)] space-y-1">{ opp.drivers.slice( 0, 3 ).map( ( driver ) => <p key={ driver }>{ driver }</p> ) }</div><div className="bg-[var(--panel)] border border-[var(--hairline)] p-3 text-xs font-mono text-[var(--muted)] leading-relaxed">{ opp.suggestedMessage }</div><div className="flex flex-wrap gap-3"><button type="button" onClick={ () => draftFromOpportunity( opp ) } className="text-xs font-mono text-[var(--long)] hover:text-[var(--text)] transition-colors">Use as campaign draft</button><button type="button" disabled={ sendingKey === opp.userId } onClick={ () => void sendRetentionEmail( opp ) } className="text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors disabled:opacity-50">{ sendingKey === opp.userId ? "Sending..." : "Send email" }</button></div></article> ) }</div> }
             </div>
 
             <div className="panel overflow-hidden">

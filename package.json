@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "seed:marketing": "node scripts/seed-marketing-scenarios.mjs",
+    "seed:marketing:auto": "node scripts/seed-marketing-automation-condition.mjs",
     "check:bot-stop-payload": "node scripts/check-bot-stop-payload.mjs",
     "worker": "npx tsx scripts/worker.ts"
   },

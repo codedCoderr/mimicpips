@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, Loader2, TriangleAlert } from "lucide-react";
+import { Download, Loader2, TriangleAlert } from "lucide-react";
+import { OperatorHeader } from "@/components/OperatorHeader";
 import { loadSession, type Session } from "@/lib/session";
 import {
   fetchLedgerSummary,
@@ -112,19 +113,9 @@ export default function LedgerPage() {
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/dashboard")}
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <ArrowLeft size={13} />
-            Back
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <span className="font-display font-semibold text-lg">Ledger</span>
-        </div>
-      </header>
+      <OperatorHeader
+        status={ <span className="eyebrow">Ledger and exports</span> }
+      />
 
       <div className="flex-1 p-6">
         <div className="max-w-[1100px] mx-auto space-y-6">

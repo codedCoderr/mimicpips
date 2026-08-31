@@ -3,15 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { LogOut, Receipt, FlaskConical, Users, Megaphone } from "lucide-react";
-import { loadSession, clearSession, type Session } from "@/lib/session";
+import { loadSession, type Session } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
 import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
 import { StatusStrip } from "@/components/StatusStrip";
 import { AccountSummary } from "@/components/AccountSummary";
 import { PerformanceSummaryPanel } from "@/components/PerformanceSummaryPanel";
-import { BrandMark } from "@/components/BrandMark";
+import { OperatorHeader } from "@/components/OperatorHeader";
 
 // Dynamically import heavy UI panels to eliminate layout shift and reduce initial JS bundle size
 const FollowersSummaryPanel = dynamic(
@@ -158,13 +157,6 @@ export default function DashboardPage () {
     return () => clearInterval( id );
   }, [ session, loadTrades ] );
 
-  async function handleDisconnect () {
-    clearSession();
-    await fetch( "/api/operator/bot-session", { method: "DELETE" } ).catch( () => { } );
-    await fetch( "/api/logout", { method: "POST" } ).catch( () => { } );
-    router.push( "/login" );
-  }
-
   if ( !ready || !session ) {
     return (
       <main className="min-h-screen flex flex-col bg-[var(--bg)]">
@@ -179,59 +171,17 @@ export default function DashboardPage () {
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <BrandMark label="Mimic Pips" />
-
-        <div className="flex items-center gap-3">
-          {/* Trigger badge if socket is disconnected OR backend health is unhealthy */ }
-          { ( connState !== "live" || snapshot?.health?.status === "unhealthy" ) && (
-            <span className="text-xs font-mono text-[var(--short)] border border-[var(--short-dim)] px-2 py-0.5 rounded mr-2">
-              { snapshot?.health?.status === "unhealthy"
-                ? "EXCHANGE UNHEALTHY (DISPLAYING CACHED)"
-                : connState === "reconnecting"
-                  ? "RECONNECTING (DISPLAYING CACHED)"
-                  : "OFFLINE (DISPLAYING CACHED)" }
-            </span>
-          ) }
-
-          <button
-            onClick={ () => router.push( "/dashboard/ledger" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <Receipt size={ 13 } />
-            Ledger
-          </button>
-          <button
-            onClick={ () => router.push( "/dashboard/backtest" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <FlaskConical size={ 13 } />
-            Backtest
-          </button>
-          <button
-            onClick={ () => router.push( "/dashboard/followers" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <Users size={ 13 } />
-            Followers
-          </button>
-          <button
-            onClick={ () => router.push( "/dashboard/marketing" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <Megaphone size={ 13 } />
-            Marketing
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <button
-            onClick={ () => void handleDisconnect() }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <LogOut size={ 13 } />
-            Sign out
-          </button>
-        </div>
-      </header>
+      <OperatorHeader
+        status={ ( connState !== "live" || snapshot?.health?.status === "unhealthy" ) ? (
+          <span className="text-xs font-mono text-[var(--short)] border border-[var(--short-dim)] px-2 py-0.5 rounded">
+            { snapshot?.health?.status === "unhealthy"
+              ? "EXCHANGE UNHEALTHY (DISPLAYING CACHED)"
+              : connState === "reconnecting"
+                ? "RECONNECTING (DISPLAYING CACHED)"
+                : "OFFLINE (DISPLAYING CACHED)" }
+          </span>
+        ) : null }
+      />
 
       <StatusStrip snapshot={ displaySnapshot } connState={ connState } />
 
