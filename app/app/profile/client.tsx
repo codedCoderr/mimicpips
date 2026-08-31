@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogOut, Link2, CreditCard, Mail, Loader2, User, ArrowLeft } from "lucide-react";
 import { OnboardingModal } from "@/components/OnboardingModal";
 
@@ -24,6 +24,14 @@ export function ProfilePageClient ( {
   const [ showOnboarding, setShowOnboarding ] = useState(
     !hasSeenOnboarding && !exchangeConnected
   );
+
+  useEffect( () => {
+    fetch( "/api/saas/behaviour-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify( { type: "profile_view", metadata: { surface: "profile" } } ),
+    } ).catch( () => {} );
+  }, [] );
   async function handleSignOut () {
     await fetch( "/api/saas/logout", { method: "POST" } ).catch( () => { } );
     router.push( "/app/login" );

@@ -4,6 +4,7 @@ import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 import { getSaasDb } from "@/lib/saasDb";
 import { getCopyTradeMinActivationBalanceUSDT } from "@/lib/copyTradeSizing";
 import type { UserDoc, ExchangeKeyDoc, SubscriptionDoc, PerformanceFeeInvoiceDoc } from "@/lib/saasTypes";
+import { calculateFollowerHealth, type FollowerHealthScore } from "@/lib/followerHealth";
 
 async function requireOperator ( req: NextRequest ): Promise<boolean> {
   try {
@@ -27,6 +28,7 @@ export interface FollowerListItem {
   subscriptionStatus: string | null;
   pendingInvoiceCount: number;
   pendingInvoiceTotalNGN: number;
+  health: FollowerHealthScore;
 }
 
 export async function GET ( req: NextRequest ) {
@@ -68,6 +70,11 @@ export async function GET ( req: NextRequest ) {
       pendingByUser.set( key, existing );
     }
 
+    const healthByUser = new Map<string, FollowerHealthScore>();
+    await Promise.all( users.map( async ( u ) => {
+      if ( u._id ) healthByUser.set( u._id.toString(), await calculateFollowerHealth( db, u as UserDoc & { _id: ObjectId } ) );
+    } ) );
+
     const followers: FollowerListItem[] = users.map( ( u ) => {
       const key = keyByUser.get( u._id!.toString() );
       const sub = subByUser.get( u._id!.toString() );
@@ -90,14 +97,15 @@ export async function GET ( req: NextRequest ) {
         subscriptionStatus: sub?.status ?? null,
         pendingInvoiceCount: pending?.count ?? 0,
         pendingInvoiceTotalNGN: pending?.totalNGN ?? 0,
+        health: healthByUser.get( u._id!.toString() )!,
       };
     } );
 
     return NextResponse.json( { followers } );
-  } catch ( err: any ) {
+  } catch ( err: unknown ) {
     console.error( "Error in GET /api/saas/followers:", err );
     return NextResponse.json(
-      { error: err?.message ?? "Failed to fetch followers from database." },
+      { error: err instanceof Error ? err.message : "Failed to fetch followers from database." },
       { status: 500 }
     );
   }
@@ -181,10 +189,10 @@ export async function PATCH ( req: NextRequest ) {
     }
 
     return NextResponse.json( { ok: true, copyTradingEnabled } );
-  } catch ( err: any ) {
+  } catch ( err: unknown ) {
     console.error( "Error in PATCH /api/saas/followers:", err );
     return NextResponse.json(
-      { error: err?.message ?? "An error occurred while updating the follower." },
+      { error: err instanceof Error ? err.message : "An error occurred while updating the follower." },
       { status: 500 }
     );
   }

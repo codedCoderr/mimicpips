@@ -23,6 +23,10 @@ export interface LeaderTradeEvent {
   leaderBalance: number;
   entryPrice?: number | null;
   exitPrice?: number | null;
+  stopLossPrice?: number | null;
+  stopLossType?: "ATR" | "manual" | "unknown" | null;
+  atrPeriod?: number | null;
+  atrMultiplier?: number | null;
   realizedPnl?: number | null;
   leverage?: number | null;
   reduceOnly?: boolean;
@@ -36,6 +40,10 @@ export interface CopyTradeExecutionResult {
   followerOrderId: string | null;
   entryPrice?: number | null;
   exitPrice?: number | null;
+  stopLossPrice?: number | null;
+  stopLossType?: "ATR" | "manual" | "unknown" | null;
+  atrPeriod?: number | null;
+  atrMultiplier?: number | null;
   realizedPnl?: number | null;
   roiPercentage?: number | null;
   detail: string | null;
@@ -52,6 +60,10 @@ interface BotCopyTradeResponse {
   orderId?: string;
   followerOrderId?: string;
   avgFillPrice?: number | null;
+  stopLossPrice?: number | null;
+  stopLossType?: "ATR" | "manual" | "unknown" | null;
+  atrPeriod?: number | null;
+  atrMultiplier?: number | null;
   reason?: string;
   error?: string;
 }
@@ -76,9 +88,20 @@ function userFacingExecutionError(message: string): string {
   return message;
 }
 
-export function parseLeaderTradeEvent(input: unknown): LeaderTradeEvent | null {
-  if (!input || typeof input !== "object") return null;
+function unwrapTradePayload(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
   const body = input as Record<string, unknown>;
+  return body.trade ?? body.position ?? body.order ?? input;
+}
+
+export function hasStopLossProtection(event: LeaderTradeEvent): boolean {
+  return Number.isFinite(event.stopLossPrice) && Number(event.stopLossPrice) > 0;
+}
+
+export function parseLeaderTradeEvent(input: unknown): LeaderTradeEvent | null {
+  const unwrapped = unwrapTradePayload(input);
+  if (!unwrapped || typeof unwrapped !== "object") return null;
+  const body = unwrapped as Record<string, unknown>;
 
   const leaderTradeId = readString(body.leaderTradeId) ?? readString(body.tradeId) ?? readString(body.id);
   const rawAction = readString(body.action)?.toUpperCase() ?? (readString(body.type) === "position.closed" ? "CLOSE" : "OPEN");
@@ -101,6 +124,20 @@ export function parseLeaderTradeEvent(input: unknown): LeaderTradeEvent | null {
     leaderBalance,
     entryPrice: readNumber(body.entryPrice) ?? readNumber(body.avgEntryPrice) ?? null,
     exitPrice: readNumber(body.exitPrice) ?? null,
+    stopLossPrice:
+      readNumber(body.stopLossPrice) ??
+      readNumber(body.stopLoss) ??
+      readNumber(body.atrStopLoss) ??
+      readNumber(body.atrStopLossPrice) ??
+      null,
+    stopLossType:
+      readNumber(body.atrStopLoss) || readNumber(body.atrStopLossPrice) || readNumber(body.atrMultiplier) || readNumber(body.stMult)
+        ? "ATR"
+        : readNumber(body.stopLossPrice) || readNumber(body.stopLoss)
+          ? "manual"
+          : null,
+    atrPeriod: readNumber(body.atrPeriod) ?? readNumber(body.stPeriod) ?? null,
+    atrMultiplier: readNumber(body.atrMultiplier) ?? readNumber(body.stMult) ?? null,
     realizedPnl: readFiniteNumber(body.realizedPnl) ?? readFiniteNumber(body.realizedPnL) ?? readFiniteNumber(body.pnl) ?? readFiniteNumber(body.cumulativePnL) ?? null,
     leverage: readNumber(body.leverage) ?? null,
     reduceOnly: typeof body.reduceOnly === "boolean" ? body.reduceOnly : action === "CLOSE",
@@ -294,6 +331,10 @@ async function executeForFollower(
       followerOrderId: execution.followerOrderId ?? execution.orderId ?? null,
       entryPrice,
       exitPrice,
+      stopLossPrice: execution.stopLossPrice ?? event.stopLossPrice ?? null,
+      stopLossType: execution.stopLossType ?? event.stopLossType ?? null,
+      atrPeriod: execution.atrPeriod ?? event.atrPeriod ?? null,
+      atrMultiplier: execution.atrMultiplier ?? event.atrMultiplier ?? null,
       realizedPnl,
       roiPercentage,
       detail: sizing.cappedByMaxPct ? "Executed with max-notional cap applied." : null,
@@ -334,6 +375,10 @@ async function callBotCopyTradeExecution(
       leverage: event.leverage,
       reduceOnly: event.reduceOnly,
       leaderTradeId: event.leaderTradeId,
+      stopLossPrice: event.stopLossPrice,
+      stopLossType: event.stopLossType,
+      atrPeriod: event.atrPeriod,
+      atrMultiplier: event.atrMultiplier,
     }),
   });
 
@@ -376,6 +421,10 @@ async function writeLog(
         followerOrderId: result.followerOrderId,
         entryPrice: result.entryPrice,
         exitPrice: result.exitPrice,
+        stopLossPrice: result.stopLossPrice ?? event.stopLossPrice ?? null,
+        stopLossType: result.stopLossType ?? event.stopLossType ?? null,
+        atrPeriod: result.atrPeriod ?? event.atrPeriod ?? null,
+        atrMultiplier: result.atrMultiplier ?? event.atrMultiplier ?? null,
         realizedPnl: result.realizedPnl,
         roiPercentage: result.roiPercentage,
         exchange: follower.key.exchange,

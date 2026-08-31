@@ -3,6 +3,7 @@ import { createUser, createSession, COOKIE_NAME, SESSION_TTL_MS } from "@/lib/sa
 import { isRateLimited } from "@/lib/rateLimit";
 import { sendVerificationEmail } from "@/lib/emailVerification";
 import { getErrorMessage } from "@/lib/errorMessage";
+import { createTelegramSignalInviteLink } from "@/lib/telegram";
 
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000;
@@ -49,9 +50,15 @@ export async function POST ( req: NextRequest ) {
       console.error( "Failed to send verification email:", err.message );
     } );
 
+    const telegramInvite = await createTelegramSignalInviteLink( `signup-${ user._id!.toString().slice( -8 ) }` ).catch( ( err ) => {
+      console.error( "Failed to create Telegram signal invite:", err.message );
+      return null;
+    } );
+
     const res = NextResponse.json( {
       ok: true,
       user: { email: user.email, displayName: user.displayName },
+      telegramInviteUrl: telegramInvite?.inviteLink ?? null,
     } );
     res.cookies.set( COOKIE_NAME, token, {
       httpOnly: true,

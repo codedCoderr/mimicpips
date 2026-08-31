@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { LogOut, Receipt, FlaskConical, Users } from "lucide-react";
+import { LogOut, Receipt, FlaskConical, Users, Megaphone } from "lucide-react";
 import { loadSession, clearSession, type Session } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
@@ -214,6 +214,13 @@ export default function DashboardPage () {
           >
             <Users size={ 13 } />
             Followers
+          </button>
+          <button
+            onClick={ () => router.push( "/dashboard/marketing" ) }
+            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+          >
+            <Megaphone size={ 13 } />
+            Marketing
           </button>
           <div className="w-px h-4 bg-[var(--hairline)]" />
           <button

@@ -10,6 +10,7 @@ import type {
   SubscriptionDoc,
   PerformanceFeeInvoiceDoc,
 } from "@/lib/saasTypes";
+import type { FollowerBehaviourEventDoc } from "@/lib/followerHealth";
 import {
   getCopyTradeMinActivationBalanceUSDT,
   getCopyTradePauseBalanceUSDT,
@@ -160,9 +161,17 @@ export async function POST ( req: NextRequest ) {
       );
     }
 
-    await db
-      .collection<UserDoc>( "users" )
-      .updateOne( { _id: objectId }, { $set: { copyTradingEnabled: enabled } } );
+    await Promise.all( [
+      db
+        .collection<UserDoc>( "users" )
+        .updateOne( { _id: objectId }, { $set: { copyTradingEnabled: enabled } } ),
+      db.collection<FollowerBehaviourEventDoc>( "follower_behaviour_events" ).insertOne( {
+        userId: objectId,
+        type: enabled ? "copy_trading_enabled" : "copy_trading_disabled",
+        metadata: { source: "follower_dashboard" },
+        createdAt: new Date(),
+      } ),
+    ] );
 
     return NextResponse.json( {
       ok: true,

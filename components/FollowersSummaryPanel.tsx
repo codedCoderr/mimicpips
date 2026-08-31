@@ -73,8 +73,8 @@ export function FollowersSummaryPanel() {
       </div>
 
       {loading || !summary ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[var(--hairline)]">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-px bg-[var(--hairline)]">
+          {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="panel p-4 h-[76px] bg-[var(--panel)] animate-pulse" />
           ))}
         </div>
@@ -98,6 +98,12 @@ export function FollowersSummaryPanel() {
             value={String(summary.pendingInvoices)}
             sub={summary.pendingInvoices > 0 ? fmtNgn(summary.pendingInvoiceTotalNGN) : undefined}
             accent={summary.pendingInvoices > 0 ? "warn" : "neutral"}
+          />
+          <Tile
+            label="Follower Health"
+            value={`${summary.averageHealthScore}/100`}
+            sub={`${summary.atRiskFollowers} high risk, ${summary.anxiousFollowers} anxious`}
+            accent={summary.atRiskFollowers > 0 || summary.anxiousFollowers > 0 ? "warn" : "long"}
           />
         </div>
       )}

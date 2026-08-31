@@ -194,6 +194,14 @@ export default function BillingPage () {
     loadInvoices();
   }, [ loadInvoices ] );
 
+  useEffect( () => {
+    fetch( "/api/saas/behaviour-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify( { type: "billing_view", metadata: { surface: "billing" } } ),
+    } ).catch( () => {} );
+  }, [] );
+
   async function handleSubscribe () {
     setSubscribing( true );
     setSubscribeError( null );

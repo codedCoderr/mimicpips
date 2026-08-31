@@ -13,7 +13,11 @@ import {
   TrendingUp,
   Activity,
   Target,
-  HelpCircle
+  HelpCircle,
+  ShieldCheck,
+  HeartPulse,
+  AlertTriangle,
+  Download
 } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 
@@ -30,6 +34,38 @@ interface GateStatus {
   allGatesMet: boolean;
 }
 
+interface FollowerHealth {
+  score: number;
+  band: "healthy" | "watching" | "anxious" | "likely_to_churn";
+  label: string;
+  drivers: string[];
+  recommendedAction: string;
+  recentDashboardViews: number;
+  recentRiskActions: number;
+  losingTrades30d: number;
+  netPnl30d: number;
+  daysUntilRenewal: number | null;
+}
+
+interface UnifiedTrade {
+  id: string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  entryPrice: number;
+  exitPrice: number;
+  stopLossPrice: number | null;
+  stopLossType: "ATR" | "manual" | "unknown" | null;
+  atrPeriod: number | null;
+  atrMultiplier: number | null;
+  marginAllocated: number;
+  realizedPnl: number;
+  roiPercentage: number;
+  status: string;
+  detail: string | null;
+  executedAt: string;
+  isOpen: boolean;
+}
+
 interface CopyTradeLogEntry {
   id: string;
   leaderTradeId?: string;
@@ -38,6 +74,10 @@ interface CopyTradeLogEntry {
   side: "LONG" | "SHORT";
   entryPrice: number;
   exitPrice: number;
+  stopLossPrice?: number | null;
+  stopLossType?: "ATR" | "manual" | "unknown" | null;
+  atrPeriod?: number | null;
+  atrMultiplier?: number | null;
   marginAllocated: number;
   realizedPnl: number;
   roiPercentage: number;
@@ -136,6 +176,31 @@ function statusLabel ( status: string ): string {
   return status;
 }
 
+function stopLossLabel ( trade: UnifiedTrade ): string {
+  if ( !trade.isOpen ) return "Closed";
+  if ( !trade.stopLossPrice ) return "Pending";
+  if ( trade.stopLossType === "ATR" ) return "ATR stop active";
+  if ( trade.stopLossType === "manual" ) return "Stop active";
+  return "Stop tracked";
+}
+
+function stopDistancePct ( trade: UnifiedTrade ): number | null {
+  const entryPrice = Number( trade.entryPrice ?? 0 );
+  const stopLossPrice = Number( trade.stopLossPrice ?? 0 );
+  const roi = Number( trade.roiPercentage ?? 0 );
+  if ( !trade.isOpen || !entryPrice || !stopLossPrice || !Number.isFinite( roi ) ) return null;
+
+  const direction = trade.side === "SHORT" ? -1 : 1;
+  const markPrice = entryPrice * ( 1 + ( roi / 100 ) * direction );
+  if ( markPrice <= 0 ) return null;
+
+  const distance = trade.side === "SHORT"
+    ? ( ( stopLossPrice - markPrice ) / markPrice ) * 100
+    : ( ( markPrice - stopLossPrice ) / markPrice ) * 100;
+
+  return Number.isFinite( distance ) ? distance : null;
+}
+
 export function CopyTradingDashboardClient ( {
   displayName,
   copyTradingEnabled: initialEnabled,
@@ -151,6 +216,9 @@ export function CopyTradingDashboardClient ( {
   const [ logEntries, setLogEntries ] = useState<CopyTradeLogEntry[] | null>( null );
   const [ logLoading, setLogLoading ] = useState( true );
   const [ logError, setLogError ] = useState<string | null>( null );
+  const [ health, setHealth ] = useState<FollowerHealth | null>( null );
+  const [ cardGenerating, setCardGenerating ] = useState( false );
+  const [ cardNotice, setCardNotice ] = useState<string | null>( null );
 
   const loadLogs = useCallback( ( showLoading = false ) => {
     if ( showLoading ) setLogLoading( true );
@@ -181,9 +249,24 @@ export function CopyTradingDashboardClient ( {
       .catch( () => { } );
   }, [] );
 
+  const loadHealth = useCallback( () => {
+    fetch( "/api/saas/follower-health", { cache: "no-store" } )
+      .then( async ( res ) => {
+        const data = await res.json().catch( () => null );
+        if ( res.ok ) setHealth( data.health );
+      } )
+      .catch( () => {} );
+  }, [] );
+
   useEffect( () => {
     loadGates();
-  }, [ loadGates ] );
+    loadHealth();
+    fetch( "/api/saas/behaviour-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify( { type: "dashboard_view", metadata: { surface: "copy_trading_dashboard" } } ),
+    } ).catch( () => {} );
+  }, [ loadGates, loadHealth ] );
 
   useEffect( () => {
     loadLogs( true );
@@ -220,6 +303,7 @@ export function CopyTradingDashboardClient ( {
       }
       setEnabled( data.copyTradingEnabled );
       loadGates();
+      loadHealth();
     } catch {
       setToggleError( "Could not reach the server." );
     } finally {
@@ -232,11 +316,106 @@ export function CopyTradingDashboardClient ( {
     router.push( "/app/login" );
   }
 
+  async function handleGeneratePnlCard () {
+    setCardGenerating( true );
+    setCardNotice( null );
+
+    try {
+      const canvas = document.createElement( "canvas" );
+      canvas.width = 1200;
+      canvas.height = 1500;
+      const ctx = canvas.getContext( "2d" );
+      if ( !ctx ) throw new Error( "Could not create card." );
+
+      const positive = netPnl >= 0;
+      const accent = positive ? "#16a34a" : "#dc2626";
+      const muted = "#8b949e";
+
+      ctx.fillStyle = "#07111f";
+      ctx.fillRect( 0, 0, canvas.width, canvas.height );
+      ctx.fillStyle = "#0d1b2f";
+      ctx.fillRect( 70, 70, 1060, 1360 );
+      ctx.strokeStyle = "#203148";
+      ctx.lineWidth = 2;
+      ctx.strokeRect( 70, 70, 1060, 1360 );
+
+      ctx.fillStyle = muted;
+      ctx.font = "700 34px Arial";
+      ctx.fillText( "MIMIC PIPS", 120, 165 );
+      ctx.fillStyle = "#e6edf3";
+      ctx.font = "700 76px Arial";
+      ctx.fillText( "Copied Performance", 120, 275 );
+
+      ctx.fillStyle = accent;
+      ctx.font = "800 138px Arial";
+      ctx.fillText( `${ positive ? "+" : "" }${ fmtUsd( netPnl ) }`, 120, 470 );
+
+      ctx.fillStyle = muted;
+      ctx.font = "36px Arial";
+      ctx.fillText( "Recent realized copied PnL", 120, 535 );
+
+      const stats = [
+        [ "Win rate", `${ winRate.toFixed( 1 ) }%` ],
+        [ "Copied trades", String( totalCopiedTrades ) ],
+        [ "Active trades", String( activeTradesCount ) ],
+        [ "Risk Guard", health ? `${ health.label } ${ health.score }/100` : enabled ? "Active" : "Standing by" ],
+      ];
+
+      stats.forEach( ( [ label, value ], index ) => {
+        const x = 120 + ( index % 2 ) * 480;
+        const y = 710 + Math.floor( index / 2 ) * 230;
+        ctx.fillStyle = "#111f34";
+        ctx.fillRect( x, y, 420, 150 );
+        ctx.strokeStyle = "#263852";
+        ctx.strokeRect( x, y, 420, 150 );
+        ctx.fillStyle = muted;
+        ctx.font = "700 28px Arial";
+        ctx.fillText( label.toUpperCase(), x + 34, y + 52 );
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "800 48px Arial";
+        ctx.fillText( value, x + 34, y + 112 );
+      } );
+
+      ctx.fillStyle = "#16263d";
+      ctx.fillRect( 120, 1200, 960, 2 );
+      ctx.fillStyle = muted;
+      ctx.font = "30px Arial";
+      ctx.fillText( "Risk Guard: Active  •  Copy Engine: Monitoring  •  Futures trading carries risk.", 120, 1285 );
+      ctx.fillText( "Not financial advice. Results vary by follower account, exchange execution, and sizing.", 120, 1340 );
+
+      const url = canvas.toDataURL( "image/png" );
+      const link = document.createElement( "a" );
+      link.href = url;
+      link.download = `mimic-pips-pnl-${ new Date().toISOString().slice( 0, 10 ) }.png`;
+      link.click();
+
+      await fetch( "/api/saas/behaviour-events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify( {
+          type: "pnl_card_generated",
+          metadata: {
+            netPnl,
+            winRate: Number( winRate.toFixed( 2 ) ),
+            copiedTrades: totalCopiedTrades,
+            activeTrades: activeTradesCount,
+          },
+        } ),
+      } ).catch( () => {} );
+
+      setCardNotice( "PnL card downloaded. Share the win with the risk context intact." );
+    } catch {
+      setCardNotice( "Could not generate the PnL card in this browser." );
+    } finally {
+      setCardGenerating( false );
+    }
+  }
+
   // --- Derived Statistics & Deduplication ---
   // --- Derived Statistics & Deduplication ---
   const unifiedTrades = ( () => {
     if ( !logEntries ) return [];
-    const map = new Map<string, any>();
+    const map = new Map<string, UnifiedTrade>();
 
     for ( const entry of logEntries ) {
       const tradeKey = entry.leaderTradeId || entry.id;
@@ -248,6 +427,10 @@ export function CopyTradingDashboardClient ( {
           side: entry.side,
           entryPrice: entry.action === "OPEN" ? entry.entryPrice : 0,
           exitPrice: entry.action === "CLOSE" ? entry.exitPrice : 0,
+          stopLossPrice: entry.stopLossPrice ?? null,
+          stopLossType: entry.stopLossType ?? null,
+          atrPeriod: entry.atrPeriod ?? null,
+          atrMultiplier: entry.atrMultiplier ?? null,
           marginAllocated: entry.marginAllocated,
           realizedPnl: entry.realizedPnl,
           roiPercentage: entry.roiPercentage,
@@ -261,6 +444,10 @@ export function CopyTradingDashboardClient ( {
       const row = map.get( tradeKey )!;
       if ( entry.action === "OPEN" ) {
         row.entryPrice = entry.entryPrice || row.entryPrice;
+        row.stopLossPrice = entry.stopLossPrice ?? row.stopLossPrice;
+        row.stopLossType = entry.stopLossType ?? row.stopLossType;
+        row.atrPeriod = entry.atrPeriod ?? row.atrPeriod;
+        row.atrMultiplier = entry.atrMultiplier ?? row.atrMultiplier;
         row.marginAllocated = entry.marginAllocated || row.marginAllocated;
       } else if ( entry.action === "CLOSE" || ( entry.exitPrice ?? 0 ) > 0 ) {
         row.exitPrice = entry.exitPrice || row.exitPrice;
@@ -276,6 +463,7 @@ export function CopyTradingDashboardClient ( {
 
   const totalCopiedTrades = unifiedTrades.length;
   const activeTradesCount = unifiedTrades.filter( e => e.isOpen ).length;
+  const protectedActiveTrades = unifiedTrades.filter( e => e.isOpen && e.stopLossPrice ).length;
   const closedTrades = unifiedTrades.filter( e => !e.isOpen );
   const netPnl = closedTrades.reduce( ( sum, e ) => sum + ( e.realizedPnl || 0 ), 0 );
   const winningTrades = closedTrades.filter( e => ( e.realizedPnl || 0 ) > 0 ).length;
@@ -328,6 +516,56 @@ export function CopyTradingDashboardClient ( {
           <div>
             <span className="eyebrow">Welcome back</span>
             <h1 className="font-display text-2xl font-semibold mt-1">{ displayName }</h1>
+          </div>
+
+          <div className="panel p-5 space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="eyebrow">Risk confidence</span>
+                <div className="mt-2 flex items-center gap-3">
+                  <span
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-full border"
+                    style={ { borderColor: health?.band === "likely_to_churn" || health?.band === "anxious" ? "var(--warn)" : "var(--long-dim)", color: health?.band === "likely_to_churn" || health?.band === "anxious" ? "var(--warn)" : "var(--long)" } }
+                  >
+                    { health?.band === "likely_to_churn" || health?.band === "anxious" ? <AlertTriangle size={ 20 } /> : <ShieldCheck size={ 20 } /> }
+                  </span>
+                  <div>
+                    <p className="font-display text-xl font-semibold">
+                      Risk Guard { enabled ? "active" : "standing by" }
+                    </p>
+                    <p className="text-xs font-mono text-[var(--muted)] mt-1">
+                      { health ? `${ health.label } confidence score: ${ health.score }/100` : "Calculating confidence score..." }
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <HeartPulse size={ 18 } className="text-[var(--muted)]" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-[var(--hairline)]">
+              <div className="bg-[var(--panel-raised)] p-3">
+                <span className="eyebrow">30d copied PnL</span>
+                <p className="font-display text-lg font-semibold mt-1" style={ { color: Number( health?.netPnl30d ?? 0 ) >= 0 ? "var(--long)" : "var(--short)" } }>
+                  { health ? `${ health.netPnl30d >= 0 ? "+" : "" }${ fmtUsd( health.netPnl30d ) }` : "—" }
+                </p>
+              </div>
+              <div className="bg-[var(--panel-raised)] p-3">
+                <span className="eyebrow">ATR stop cover</span>
+                <p className="font-display text-lg font-semibold mt-1" style={ { color: protectedActiveTrades === activeTradesCount ? "var(--long)" : activeTradesCount > 0 ? "var(--warn)" : "var(--muted)" } }>
+                  { activeTradesCount > 0 ? `${ protectedActiveTrades }/${ activeTradesCount }` : "No live trades" }
+                </p>
+              </div>
+              <div className="bg-[var(--panel-raised)] p-3">
+                <span className="eyebrow">Renewal window</span>
+                <p className="font-display text-lg font-semibold mt-1">
+                  { health?.daysUntilRenewal === null || health?.daysUntilRenewal === undefined ? "Not active" : `${ health.daysUntilRenewal }d` }
+                </p>
+              </div>
+            </div>
+            { health && (
+              <p className="text-xs font-mono text-[var(--muted)] leading-relaxed">
+                { health.drivers[0] } { health.band === "healthy" ? "The system is watching execution gates, invoices, and copy status before live entries." : "Mimic Pips is designed to show you the reason behind each risk signal, not just a red number." }
+              </p>
+            ) }
           </div>
 
           <div className="panel p-5 space-y-4">
@@ -487,6 +725,34 @@ export function CopyTradingDashboardClient ( {
             </div>
           ) }
 
+          { !logLoading && unifiedTrades.length > 0 && (
+            <div className="panel p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <span className="eyebrow">Shareable proof</span>
+                  <h2 className="font-display text-lg font-semibold mt-1">Turn your copied result into a PnL card</h2>
+                  <p className="text-xs font-mono text-[var(--muted)] mt-1">
+                    Includes recent PnL, win rate, copied trades, and Risk Guard context.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={ () => void handleGeneratePnlCard() }
+                  disabled={ cardGenerating }
+                  className="inline-flex items-center justify-center gap-2 border border-[var(--long-dim)] text-[var(--long)] hover:text-[var(--text)] font-mono text-xs px-3 py-2 disabled:opacity-50"
+                >
+                  { cardGenerating ? <Loader2 size={ 14 } className="animate-spin" /> : <Download size={ 14 } /> }
+                  { cardGenerating ? "Preparing card..." : "Download PnL card" }
+                </button>
+              </div>
+              { cardNotice && (
+                <p className="text-xs font-mono text-[var(--muted)] border border-[var(--hairline)] bg-[var(--panel-raised)] px-3 py-2">
+                  { cardNotice }
+                </p>
+              ) }
+            </div>
+          ) }
+
 
           <div className="panel overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--hairline)]">
@@ -527,7 +793,7 @@ export function CopyTradingDashboardClient ( {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--hairline)]">
-                      { [ "Symbol", "Side", "Entry / Exit", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
+                      { [ "Symbol", "Side", "Entry / Exit", "Risk Guard", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
                         <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">
                           { h }
                         </th>
@@ -562,8 +828,27 @@ export function CopyTradingDashboardClient ( {
                               ? fmtUsd( e.exitPrice )
                               : e.isOpen
                                 ? "Active"
-                                : "Closed" }
+                            : "Closed" }
                           </div>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div
+                            className="font-semibold"
+                            style={ { color: e.stopLossPrice && e.isOpen ? "var(--long)" : e.isOpen ? "var(--warn)" : "var(--muted)" } }
+                          >
+                            { stopLossLabel( e ) }
+                          </div>
+                          { e.stopLossPrice ? (
+                            <div className="text-[10px] text-[var(--muted)]">
+                              Stop: { fmtUsd( e.stopLossPrice ) }
+                              { e.stopLossType === "ATR" && e.atrMultiplier ? ` • ${ e.atrMultiplier }x ATR` : "" }
+                              { stopDistancePct( e ) !== null ? ` • ${ Math.max( 0, stopDistancePct( e )! ).toFixed( 1 ) }% away` : "" }
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-[var(--muted)]">
+                              { e.isOpen ? "Waiting for bot stop data" : "No longer live" }
+                            </div>
+                          ) }
                         </td>
                         <td className="px-4 py-2.5 tabular text-[var(--text)]">
                           { fmtUsd( e.marginAllocated ?? 0 ) }

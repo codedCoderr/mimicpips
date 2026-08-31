@@ -54,6 +54,14 @@ export function PerformanceClient () {
     loadData();
   }, [ loadData ] );
 
+  useEffect( () => {
+    fetch( "/api/saas/behaviour-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify( { type: "performance_view", metadata: { surface: "performance", filter } } ),
+    } ).catch( () => {} );
+  }, [ filter ] );
+
   const durations: DurationFilter[] = [ "7D", "1M", "3M", "1Y", "ALL" ];
   async function handleSignOut () {
     await fetch( "/api/saas/logout", { method: "POST" } ).catch( () => { } );

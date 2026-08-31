@@ -11,6 +11,7 @@ export default function SignupPage () {
   const [ password, setPassword ] = useState( "" );
   const [ error, setError ] = useState<string | null>( null );
   const [ busy, setBusy ] = useState( false );
+  const [ telegramInviteUrl, setTelegramInviteUrl ] = useState<string | null>( null );
 
   async function handleSubmit ( e: React.FormEvent ) {
     e.preventDefault();
@@ -26,6 +27,10 @@ export default function SignupPage () {
       const data = await res.json();
       if ( !res.ok ) {
         setError( data?.error ?? "Signup failed." );
+        return;
+      }
+      if ( data?.telegramInviteUrl ) {
+        setTelegramInviteUrl( data.telegramInviteUrl );
         return;
       }
       router.push( "/app/profile" );
@@ -112,9 +117,31 @@ export default function SignupPage () {
             </div>
           ) }
 
+          { telegramInviteUrl && (
+            <div className="border border-[var(--long-dim)] bg-[var(--long-dim)]/10 px-3.5 py-3 text-sm text-[var(--muted)] leading-relaxed">
+              <p className="font-display font-semibold text-[var(--text)] mb-1">Account created.</p>
+              <p>Join the Mimic Pips signal channel to receive official trade updates and risk-control broadcasts.</p>
+              <a
+                href={ telegramInviteUrl }
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex mt-3 bg-[var(--long)] text-[var(--bg)] font-display font-semibold px-3 py-2"
+              >
+                Join signal channel
+              </a>
+              <button
+                type="button"
+                onClick={ () => router.push( "/app/profile" ) }
+                className="ml-3 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] underline"
+              >
+                Continue to dashboard
+              </button>
+            </div>
+          ) }
+
           <button
             type="submit"
-            disabled={ busy }
+            disabled={ busy || !!telegramInviteUrl }
             className="w-full mt-2 bg-[var(--text)] text-[var(--bg)] font-display font-semibold text-sm
                        py-3 hover:bg-[var(--long)] transition-colors disabled:opacity-50
                        disabled:cursor-not-allowed"
