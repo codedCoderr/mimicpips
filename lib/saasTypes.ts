@@ -167,6 +167,10 @@ export interface CopyTradeLogDoc {
   followerOrderId: string | null;
   entryPrice?: number | null;
   exitPrice?: number | null;
+  stopLossPrice?: number | null;
+  stopLossType?: "ATR" | "manual" | "unknown" | null;
+  atrPeriod?: number | null;
+  atrMultiplier?: number | null;
   realizedPnl?: number | null;
   roiPercentage?: number | null;
   exchange: ExchangeId;

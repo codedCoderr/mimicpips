@@ -9,6 +9,10 @@ type CopyTradeLogResponseDoc = CopyTradeLogDoc & {
   side?: "LONG" | "SHORT";
   entryPrice?: number;
   exitPrice?: number;
+  stopLossPrice?: number | null;
+  stopLossType?: "ATR" | "manual" | "unknown" | null;
+  atrPeriod?: number | null;
+  atrMultiplier?: number | null;
   marginAllocated?: number;
   realizedPnl?: number;
   roiPercentage?: number;
@@ -145,6 +149,10 @@ export async function GET ( req: NextRequest ) {
           side: e.side || e.leaderSide || "LONG",
           entryPrice: e.entryPrice ?? 0,
           exitPrice: e.exitPrice ?? 0,
+          stopLossPrice: e.stopLossPrice ?? null,
+          stopLossType: e.stopLossType ?? null,
+          atrPeriod: e.atrPeriod ?? null,
+          atrMultiplier: e.atrMultiplier ?? null,
           marginAllocated: e.marginAllocated ?? e.followerNotional ?? 0,
           followerNotional: e.followerNotional ?? e.marginAllocated ?? 0,
           realizedPnl: pnl,

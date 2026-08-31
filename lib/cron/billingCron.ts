@@ -2,6 +2,8 @@ import cron from "node-cron";
 import { ObjectId } from "mongodb";
 import { getSaasDb } from "@/lib/saasDb";
 import { runPerformanceFeeBillingCycle, runSubscriptionRenewalCycle } from "@/lib/billingJobs";
+import { runRetentionEmailCycle } from "@/lib/retentionEmails";
+import { runMarketingAutomationCycle } from "@/lib/marketingAutomation";
 import {
   getCopyTradeMinActivationBalanceUSDT,
   getCopyTradePauseBalanceUSDT,
@@ -222,10 +224,30 @@ export function initBillingCron () {
   //   }
   // } );
 
+  // Marketing signal scanner every 30 minutes. It creates deduped proof points and
+  // sends to the signal channel only when AUTO_TELEGRAM_MARKETING=true.
+  cron.schedule( "*/30 * * * *", async () => {
+    try {
+      const results = await runMarketingAutomationCycle();
+      const sent = results.filter( ( result ) => result.outcome === "telegram_sent" ).length;
+      const created = results.filter( ( result ) => result.outcome === "created" ).length;
+      if ( sent > 0 || created > 0 ) {
+        console.log( `[Cron] Marketing automation created ${ created } signal(s), sent ${ sent } Telegram post(s).` );
+      }
+    } catch ( err ) {
+      console.error( "❌ [Cron] Marketing signal scanner failed:", err );
+    }
+  } );
+
   // Daily reminders at 08:00 AM WAT
   cron.schedule( "0 8 * * *", async () => {
     try {
       await sendSubscriptionReminders();
+      const retentionResults = await runRetentionEmailCycle();
+      const sentCount = retentionResults.filter( ( result ) => result.outcome === "sent" ).length;
+      if ( sentCount > 0 ) {
+        console.log( `[Cron] Sent ${ sentCount } retention email(s).` );
+      }
     } catch ( err ) {
       console.error( "❌ [Cron] Daily reminder check failed:", err );
     }

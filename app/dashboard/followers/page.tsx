@@ -1,13 +1,23 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Users, PlayCircle, RefreshCw } from "lucide-react";
+import { Loader2, PlayCircle, RefreshCw } from "lucide-react";
+import { OperatorHeader } from "@/components/OperatorHeader";
 import type { FollowerListItem } from "@/app/api/saas/followers/route";
 
 function fmtUsd ( n: number | null ): string {
   if ( n === null ) return "—";
   return `$${ n.toLocaleString( "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) }`;
+}
+
+function HealthPill ( { score, label, band }: { score: number; label: string; band: string } ) {
+  const color = band === "likely_to_churn" ? "var(--short)" : band === "anxious" ? "var(--warn)" : band === "watching" ? "var(--muted)" : "var(--long)";
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-1.5 py-0.5 whitespace-nowrap" style={ { color, border: `1px solid ${ color }` } }>
+      <span>{ score }/100</span>
+      <span>{ label.toUpperCase() }</span>
+    </span>
+  );
 }
 
 function StatusPill ( { label, active, warn }: { label: string; active: boolean; warn?: boolean } ) {
@@ -102,7 +112,6 @@ function CopyTradeToggle ( {
 }
 
 export default function FollowersPage () {
-  const router = useRouter();
   const [ followers, setFollowers ] = useState<FollowerListItem[] | null>( null );
   const [ error, setError ] = useState<string | null>( null );
   const [ loading, setLoading ] = useState( true );
@@ -199,42 +208,30 @@ export default function FollowersPage () {
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={ () => router.push( "/dashboard" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <ArrowLeft size={ 13 } />
-            Back
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
+      <OperatorHeader
+        status={ (
           <div className="flex items-center gap-2">
-            <Users size={ 16 } />
-            <span className="font-display font-semibold text-lg">Followers</span>
+            <button
+              onClick={ () => void handleRefreshBalances() }
+              disabled={ refreshingBalances }
+              className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)]
+                         border border-[var(--hairline-bright)] px-3 py-1.5 transition-colors disabled:opacity-50"
+            >
+              { refreshingBalances ? <Loader2 size={ 13 } className="animate-spin" /> : <RefreshCw size={ 13 } /> }
+              { refreshingBalances ? "Refreshing..." : "Refresh balances" }
+            </button>
+            <button
+              onClick={ () => void handleRunBilling() }
+              disabled={ billingRunning }
+              className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)]
+                         border border-[var(--hairline-bright)] px-3 py-1.5 transition-colors disabled:opacity-50"
+            >
+              { billingRunning ? <Loader2 size={ 13 } className="animate-spin" /> : <PlayCircle size={ 13 } /> }
+              { billingRunning ? "Running..." : "Run billing now" }
+            </button>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={ () => void handleRefreshBalances() }
-            disabled={ refreshingBalances }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)]
-                       border border-[var(--hairline-bright)] px-3 py-1.5 transition-colors disabled:opacity-50"
-          >
-            { refreshingBalances ? <Loader2 size={ 13 } className="animate-spin" /> : <RefreshCw size={ 13 } /> }
-            { refreshingBalances ? "Refreshing…" : "Refresh balances" }
-          </button>
-          <button
-            onClick={ () => void handleRunBilling() }
-            disabled={ billingRunning }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)]
-                       border border-[var(--hairline-bright)] px-3 py-1.5 transition-colors disabled:opacity-50"
-          >
-            { billingRunning ? <Loader2 size={ 13 } className="animate-spin" /> : <PlayCircle size={ 13 } /> }
-            { billingRunning ? "Running…" : "Run billing now" }
-          </button>
-        </div>
-      </header>
+        ) }
+      />
 
       <div className="flex-1 p-6">
         <div className="max-w-[1200px] mx-auto space-y-6">
@@ -323,7 +320,7 @@ export default function FollowersPage () {
           ) }
 
           { followers === null ? (
-            <div className="grid grid-cols-3 gap-px bg-[var(--hairline)]">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-px bg-[var(--hairline)]">
               { Array.from( { length: 3 } ).map( ( _, i ) => (
                 <div key={ i } className="panel p-4 space-y-2">
                   <div className="h-2.5 w-24 bg-[var(--panel-raised)] animate-pulse" />
@@ -352,6 +349,15 @@ export default function FollowersPage () {
                   style={ { color: activeCount > 0 ? "var(--long)" : "var(--text)" } }
                 >
                   { activeCount }
+                </span>
+              </div>
+              <div className="panel p-4">
+                <span className="eyebrow block mb-1">At-risk followers</span>
+                <span
+                  className="font-display font-semibold text-2xl tabular"
+                  style={ { color: followers.filter( ( f ) => f.health.band === "likely_to_churn" || f.health.band === "anxious" ).length > 0 ? "var(--warn)" : "var(--long)" } }
+                >
+                  { followers.filter( ( f ) => f.health.band === "likely_to_churn" || f.health.band === "anxious" ).length }
                 </span>
               </div>
             </div>
@@ -395,6 +401,8 @@ export default function FollowersPage () {
                         "Balance",
                         "Subscription",
                         "Payment",
+                        "Health",
+                        "Recommended action",
                         "Copy trading",
                       ].map( ( h ) => (
                         <th
@@ -454,6 +462,15 @@ export default function FollowersPage () {
                           ) : (
                             <span className="text-[10px] text-[var(--muted-dim)]">—</span>
                           ) }
+                        </td>
+                        <td className="px-4 py-3">
+                          <HealthPill score={ f.health.score } label={ f.health.label } band={ f.health.band } />
+                          <div className="mt-1 max-w-[220px] text-[10px] text-[var(--muted-dim)] font-normal" title={ f.health.drivers.join( " " ) }>
+                            { f.health.drivers[0] }
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-[11px] text-[var(--muted)] min-w-[240px] max-w-[320px]">
+                          { f.health.recommendedAction }
                         </td>
                         <td className="px-4 py-3">
                           <CopyTradeToggle follower={ f } onToggled={ handleToggled } />

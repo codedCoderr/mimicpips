@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, CreditCard, Receipt, CheckCircle2, ChevronLeft, ChevronRight, User, LogOut } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
+import { FollowerHeader } from "@/components/FollowerHeader";
 import { openPaystackCheckout } from "@/lib/paystackClient";
 
 interface SubscriptionInfo {
@@ -194,6 +195,14 @@ export default function BillingPage () {
     loadInvoices();
   }, [ loadInvoices ] );
 
+  useEffect( () => {
+    fetch( "/api/saas/behaviour-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify( { type: "billing_view", metadata: { surface: "billing" } } ),
+    } ).catch( () => {} );
+  }, [] );
+
   async function handleSubscribe () {
     setSubscribing( true );
     setSubscribeError( null );
@@ -232,54 +241,9 @@ export default function BillingPage () {
   };
 
   const normalizedStatus = subscription?.status?.toUpperCase();
-  async function handleSignOut () {
-    await fetch( "/api/saas/logout", { method: "POST" } ).catch( () => { } );
-    router.push( "/app/login" );
-  }
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={ () => router.push( "/app/dashboard" ) }
-            aria-label="Back to dashboard"
-            className="text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <ArrowLeft size={ 16 } />
-          </button>
-          <div className="flex items-center gap-2">
-            <Receipt size={ 16 } />
-            <span className="font-display font-semibold text-lg">Billing</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <button
-            onClick={ () => router.push( "/app/profile" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <User size={ 13 } />
-            Profile
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <button
-            onClick={ () => router.push( "/app/performance" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            {/* Changed icon to History/FileText to fit Performance better if available, or keep User */ }
-            <User size={ 13 } />
-            Performance
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <button
-            onClick={ () => void handleSignOut() }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <LogOut size={ 13 } />
-            Sign out
-          </button>
-        </div>
-      </header>
+      <FollowerHeader />
 
       <div className="flex-1 p-6">
         <div className="max-w-[560px] mx-auto space-y-6">

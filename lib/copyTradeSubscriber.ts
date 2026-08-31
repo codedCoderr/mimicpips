@@ -1,4 +1,4 @@
-import { executeCopyTradeFanOut, parseLeaderTradeEvent } from "./copyTradeWorker";
+import { executeCopyTradeFanOut, hasStopLossProtection, parseLeaderTradeEvent } from "./copyTradeWorker";
 import { getErrorMessage } from "./errorMessage";
 
 const RECONNECT_MS = 5000;
@@ -115,6 +115,11 @@ async function handleSseChunk(chunk: string): Promise<void> {
   const results = await executeCopyTradeFanOut(tradeEvent);
   const executed = results.filter((result) => result.status === "executed" || result.status === "closed").length;
   const failed = results.filter((result) => result.status === "failed").length;
+  if (tradeEvent.action === "OPEN" && !hasStopLossProtection(tradeEvent)) {
+    console.warn(
+      `[CopyTrade] ${tradeEvent.action} ${tradeEvent.symbol}: bot payload did not include stopLossPrice/stopLoss/atrStopLoss. Follower dashboard will show stop data as pending.`
+    );
+  }
   console.log(
     `[CopyTrade] ${tradeEvent.action} ${tradeEvent.symbol}: ${executed} executed, ${failed} failed, ${results.length} total.`
   );

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Crosshair, TrendingUp, BarChart3, Activity, LogOut, Receipt, User } from "lucide-react";
+import { Crosshair, TrendingUp, BarChart3, Activity } from "lucide-react";
+import { FollowerHeader } from "@/components/FollowerHeader";
 
 type DurationFilter = "7D" | "1M" | "3M" | "1Y" | "ALL";
 
@@ -29,7 +29,6 @@ function fmtUsd ( n: number | null ): string {
 }
 
 export function PerformanceClient () {
-  const router = useRouter();
   const [ filter, setFilter ] = useState<DurationFilter>( "1M" );
   const [ stats, setStats ] = useState<LeaderStats | null>( null );
   const [ trades, setTrades ] = useState<TradeRecord[]>( [] );
@@ -54,55 +53,18 @@ export function PerformanceClient () {
     loadData();
   }, [ loadData ] );
 
+  useEffect( () => {
+    fetch( "/api/saas/behaviour-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify( { type: "performance_view", metadata: { surface: "performance", filter } } ),
+    } ).catch( () => {} );
+  }, [ filter ] );
+
   const durations: DurationFilter[] = [ "7D", "1M", "3M", "1Y", "ALL" ];
-  async function handleSignOut () {
-    await fetch( "/api/saas/logout", { method: "POST" } ).catch( () => { } );
-    router.push( "/app/login" );
-  }
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={ () => router.push( "/app/dashboard" ) }
-            aria-label="Back to dashboard"
-            className="text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <ArrowLeft size={ 16 } />
-          </button>
-          <div className="flex items-center gap-2">
-            {/* Optional: Add a matching icon here if desired, e.g., <History size={16} /> */ }
-            <span className="font-display font-semibold text-lg">Performance</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <button
-            onClick={ () => router.push( "/app/profile" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <User size={ 13 } />
-            Profile
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-
-          <button
-            onClick={ () => router.push( "/app/billing" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <Receipt size={ 13 } />
-            Billing
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <button
-            onClick={ () => void handleSignOut() }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <LogOut size={ 13 } />
-            Sign out
-          </button>
-        </div>
-      </header>
+      <FollowerHeader />
 
       <div className="flex-1 p-6">
         <div className="max-w-[900px] mx-auto space-y-6">

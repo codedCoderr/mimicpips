@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ShieldCheck, TriangleAlert, Loader2 } from "lucide-react";
+import { ShieldCheck, TriangleAlert, Loader2, ArrowRight, RefreshCcw } from "lucide-react";
+import { FollowerHeader } from "@/components/FollowerHeader";
 
 export default function ConnectExchangePage () {
   const router = useRouter();
@@ -11,10 +12,41 @@ export default function ConnectExchangePage () {
   const [ error, setError ] = useState<string | null>( null );
   const [ success, setSuccess ] = useState<{ balanceUSDT: number | null } | null>( null );
   const [ busy, setBusy ] = useState( false );
+  const [ loadingConnection, setLoadingConnection ] = useState( true );
+  const [ replacingKey, setReplacingKey ] = useState( false );
+  const [ connection, setConnection ] = useState<{
+    connected: boolean;
+    exchange: string | null;
+    balanceUSDT: number | null;
+    lastCheckedAt: string | null;
+  } | null>( null );
   const redirectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadConnection() {
+      try {
+        const res = await fetch( "/api/saas/me", { cache: "no-store" } );
+        const data = await res.json().catch( () => null );
+        if (cancelled) return;
+        setConnection({
+          connected: Boolean(data?.user?.exchangeConnected),
+          exchange: data?.user?.exchange ?? null,
+          balanceUSDT: typeof data?.user?.lastKnownBalanceUSDT === "number" ? data.user.lastKnownBalanceUSDT : null,
+          lastCheckedAt: data?.user?.lastBalanceCheckAt ?? null,
+        });
+      } catch {
+        if (!cancelled) setConnection(null);
+      } finally {
+        if (!cancelled) setLoadingConnection(false);
+      }
+    }
+
+    loadConnection();
+
     return () => {
+      cancelled = true;
       if (redirectTimer.current) clearTimeout(redirectTimer.current);
     };
   }, []);
@@ -36,11 +68,15 @@ export default function ConnectExchangePage () {
         return;
       }
       setSuccess( { balanceUSDT: data.balanceUSDT } );
+      setConnection({
+        connected: true,
+        exchange: "binance",
+        balanceUSDT: typeof data.balanceUSDT === "number" ? data.balanceUSDT : null,
+        lastCheckedAt: new Date().toISOString(),
+      });
+      setReplacingKey(false);
       setApiKey( "" );
       setApiSecret( "" );
-      // Give the user a moment to see the confirmation, then take them
-      // back to the dashboard rather than leaving them stranded on a
-      // form they've already completed.
       redirectTimer.current = setTimeout( () => router.push( "/app/dashboard" ), 2000 );
     } catch {
       setError( "Could not reach the server." );
@@ -51,22 +87,79 @@ export default function ConnectExchangePage () {
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--hairline)]">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={ () => router.push( "/app/profile" ) }
-            className="flex items-center gap-1.5 text-xs font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            <ArrowLeft size={ 13 } />
-            Back
-          </button>
-          <div className="w-px h-4 bg-[var(--hairline)]" />
-          <span className="font-display font-semibold text-lg">Connect Exchange</span>
-        </div>
-      </header>
+      <FollowerHeader />
 
       <div className="flex-1 p-6">
-        <div className="max-w-[560px] mx-auto space-y-6">
+        <div className="max-w-[680px] mx-auto space-y-6">
+          <div className="space-y-2">
+            <p className="eyebrow">Exchange access</p>
+            <h1 className="font-display text-3xl font-semibold text-[var(--text)]">Manage your Binance connection</h1>
+            <p className="text-sm text-[var(--muted)] max-w-[560px]">
+              Mimic Pips only needs read and futures trade access. Withdrawal permission is never required and is rejected.
+            </p>
+          </div>
+
+          { loadingConnection && (
+            <div className="panel p-5 flex items-center gap-2 text-sm text-[var(--muted)] font-mono">
+              <Loader2 size={ 15 } className="animate-spin" />
+              Checking exchange status...
+            </div>
+          ) }
+
+          { !loadingConnection && connection?.connected && !replacingKey && (
+            <section className="panel p-5 space-y-5" aria-labelledby="exchange-status-title">
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 flex items-center justify-center border border-[var(--long-dim)] bg-[var(--long-dim)]/10 text-[var(--long)]">
+                  <ShieldCheck size={ 20 } />
+                </div>
+                <div className="min-w-0">
+                  <p id="exchange-status-title" className="font-display text-xl font-semibold text-[var(--text)]">Exchange already connected</p>
+                  <p className="text-sm text-[var(--muted)] mt-1">
+                    Your verified { connection.exchange ?? "Binance" } key is active. You do not need to reconnect unless you intentionally want to replace it.
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <div className="border border-[var(--hairline)] bg-[var(--panel-raised)] p-4">
+                  <dt className="eyebrow">Last known balance</dt>
+                  <dd className="mt-2 font-display text-2xl text-[var(--text)]">
+                    { connection.balanceUSDT === null
+                      ? "Unavailable"
+                      : `$${ connection.balanceUSDT.toLocaleString( "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) }` }
+                  </dd>
+                </div>
+                <div className="border border-[var(--hairline)] bg-[var(--panel-raised)] p-4">
+                  <dt className="eyebrow">Last checked</dt>
+                  <dd className="mt-2 font-mono text-sm text-[var(--text)]">
+                    { connection.lastCheckedAt ? new Date( connection.lastCheckedAt ).toLocaleString() : "Not recorded" }
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={ () => router.push( "/app/dashboard" ) }
+                  className="inline-flex items-center justify-center gap-2 bg-[var(--text)] text-[var(--bg)] font-display font-semibold text-sm px-4 py-3 hover:bg-[var(--long)] transition-colors"
+                >
+                  Go to dashboard
+                  <ArrowRight size={ 15 } />
+                </button>
+                <button
+                  type="button"
+                  onClick={ () => { setReplacingKey(true); setSuccess(null); setError(null); } }
+                  className="inline-flex items-center justify-center gap-2 border border-[var(--hairline)] text-[var(--text)] font-display font-semibold text-sm px-4 py-3 hover:border-[var(--warn)] hover:text-[var(--warn)] transition-colors"
+                >
+                  <RefreshCcw size={ 15 } />
+                  Replace API key
+                </button>
+              </div>
+            </section>
+          ) }
+
+          { !loadingConnection && (!connection?.connected || replacingKey) && (
+          <>
           <div className="flex items-start gap-2 text-xs font-mono text-[var(--warn)] border border-[var(--warn)]/40 bg-[var(--warn)]/5 px-4 py-3">
             <TriangleAlert size={ 14 } className="shrink-0 mt-0.5" />
             <div className="space-y-1.5">
@@ -152,6 +245,8 @@ export default function ConnectExchangePage () {
             again after this step. It is verified against Binance directly —
             trade and read access only, no withdrawal permission.
           </p>
+          </>
+          ) }
         </div>
       </div>
     </main>
