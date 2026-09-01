@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { loadSession, type Session } from "@/lib/session";
+import { loadVerifiedSession, type Session } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
 import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
@@ -49,13 +49,19 @@ export default function DashboardPage () {
   const [ ready, setReady ] = useState( false );
 
   useEffect( () => {
-    const existing = loadSession();
-    if ( !existing ) {
-      router.replace( "/setup" );
-      return;
-    }
-    setSession( existing );
-    setReady( true );
+    let cancelled = false;
+    loadVerifiedSession().then((existing) => {
+      if (cancelled) return;
+      if ( !existing ) {
+        router.replace( "/setup" );
+        return;
+      }
+      setSession( existing );
+      setReady( true );
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [ router ] );
 
   const handleBotEventRef = useRef<( event: import( "@/lib/types" ).BotEvent ) => void>( () => { } );

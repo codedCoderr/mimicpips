@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Download, Loader2, TriangleAlert } from "lucide-react";
 import { OperatorHeader } from "@/components/OperatorHeader";
-import { loadSession, type Session } from "@/lib/session";
+import { loadVerifiedSession, type Session } from "@/lib/session";
 import {
   fetchLedgerSummary,
   fetchLedger,
@@ -44,12 +44,18 @@ export default function LedgerPage() {
   const [ledgerRowsLoading, setLedgerRowsLoading] = useState(true);
 
   useEffect(() => {
-    const existing = loadSession();
-    if (!existing) {
-      router.replace("/setup");
-      return;
-    }
-    setSession(existing);
+    let cancelled = false;
+    loadVerifiedSession().then((existing) => {
+      if (cancelled) return;
+      if (!existing) {
+        router.replace("/setup");
+        return;
+      }
+      setSession(existing);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const load = useCallback(async () => {
