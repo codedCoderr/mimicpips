@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { loadSession } from "@/lib/session";
+import { loadVerifiedSession } from "@/lib/session";
 
 function safeNextPath(value: string | null): string | null {
   if (!value) return null;
@@ -36,8 +36,11 @@ function LoginForm() {
       }
 
       const next = safeNextPath(params.get("next"));
-      const hasBotConnection = !!loadSession();
-      router.push(next ?? (hasBotConnection ? "/dashboard" : "/setup"));
+      const hasBotConnection = !!await loadVerifiedSession();
+      const destination = hasBotConnection
+        ? next ?? "/dashboard"
+        : "/setup";
+      router.push(destination);
     } catch {
       setError("Could not reach the server.");
     } finally {

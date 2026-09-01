@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Play, Loader2, TriangleAlert, CheckCircle2, XCircle } from "lucide-react";
 import { OperatorHeader } from "@/components/OperatorHeader";
-import { loadSession, type Session } from "@/lib/session";
+import { loadVerifiedSession, type Session } from "@/lib/session";
 import {
   startBacktest,
   fetchBacktestJob,
@@ -87,12 +87,18 @@ export default function BacktestPage() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    const existing = loadSession();
-    if (!existing) {
-      router.replace("/setup");
-      return;
-    }
-    setSession(existing);
+    let cancelled = false;
+    loadVerifiedSession().then((existing) => {
+      if (cancelled) return;
+      if (!existing) {
+        router.replace("/setup");
+        return;
+      }
+      setSession(existing);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const loadRecent = useCallback(() => {

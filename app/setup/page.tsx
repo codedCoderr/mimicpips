@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { loadSession, saveSession } from "@/lib/session";
+import { loadVerifiedSession, saveSession } from "@/lib/session";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { normalizeBaseUrl } from "@/lib/url";
 
@@ -14,10 +14,13 @@ export default function ConnectPage () {
   const [ checking, setChecking ] = useState( false );
 
   useEffect( () => {
-    const existing = loadSession();
-    if ( existing ) {
-      router.replace( "/dashboard" );
-    }
+    let cancelled = false;
+    loadVerifiedSession().then((existing) => {
+      if (!cancelled && existing) router.replace( "/dashboard" );
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [ router ] );
 
   // If someone lands here without a valid auth session, middleware won't
