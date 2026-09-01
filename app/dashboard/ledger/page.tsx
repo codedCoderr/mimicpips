@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Download, Loader2, TriangleAlert } from "lucide-react";
 import { OperatorHeader } from "@/components/OperatorHeader";
-import { loadVerifiedSession, type Session } from "@/lib/session";
+import { BOT_SESSION_EXPIRED_EVENT, loadVerifiedSession, type Session } from "@/lib/session";
 import {
   fetchLedgerSummary,
   fetchLedger,
@@ -56,6 +56,12 @@ export default function LedgerPage() {
     return () => {
       cancelled = true;
     };
+  }, [router]);
+
+  useEffect(() => {
+    const handleExpired = () => router.replace("/setup");
+    window.addEventListener(BOT_SESSION_EXPIRED_EVENT, handleExpired);
+    return () => window.removeEventListener(BOT_SESSION_EXPIRED_EVENT, handleExpired);
   }, [router]);
 
   const load = useCallback(async () => {

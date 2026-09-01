@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Play, Loader2, TriangleAlert, CheckCircle2, XCircle } from "lucide-react";
 import { OperatorHeader } from "@/components/OperatorHeader";
-import { loadVerifiedSession, type Session } from "@/lib/session";
+import { BOT_SESSION_EXPIRED_EVENT, loadVerifiedSession, type Session } from "@/lib/session";
 import {
   startBacktest,
   fetchBacktestJob,
@@ -99,6 +99,12 @@ export default function BacktestPage() {
     return () => {
       cancelled = true;
     };
+  }, [router]);
+
+  useEffect(() => {
+    const handleExpired = () => router.replace("/setup");
+    window.addEventListener(BOT_SESSION_EXPIRED_EVENT, handleExpired);
+    return () => window.removeEventListener(BOT_SESSION_EXPIRED_EVENT, handleExpired);
   }, [router]);
 
   const loadRecent = useCallback(() => {

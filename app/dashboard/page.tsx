@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { loadVerifiedSession, type Session } from "@/lib/session";
+import { BOT_SESSION_EXPIRED_EVENT, loadVerifiedSession, type Session } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
 import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
@@ -62,6 +62,12 @@ export default function DashboardPage () {
     return () => {
       cancelled = true;
     };
+  }, [ router ] );
+
+  useEffect( () => {
+    const handleExpired = () => router.replace( "/setup" );
+    window.addEventListener( BOT_SESSION_EXPIRED_EVENT, handleExpired );
+    return () => window.removeEventListener( BOT_SESSION_EXPIRED_EVENT, handleExpired );
   }, [ router ] );
 
   const handleBotEventRef = useRef<( event: import( "@/lib/types" ).BotEvent ) => void>( () => { } );
