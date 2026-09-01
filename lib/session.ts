@@ -1,6 +1,7 @@
 "use client";
 
 const STORAGE_KEY = "controlroom.session.v1";
+export const BOT_SESSION_EXPIRED_EVENT = "operator-bot-session-expired";
 
 export interface Session {
   connected: true;
@@ -33,6 +34,12 @@ export function clearSession() {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
+export function markBotSessionExpired() {
+  if (typeof window === "undefined") return;
+  clearSession();
+  window.dispatchEvent(new Event(BOT_SESSION_EXPIRED_EVENT));
+}
+
 export async function loadVerifiedSession(): Promise<Session | null> {
   if (typeof window === "undefined") return null;
 
@@ -41,7 +48,10 @@ export async function loadVerifiedSession(): Promise<Session | null> {
 
   try {
     const res = await fetch("/api/operator/bot-session", { cache: "no-store" });
-    if (res.status === 401) return null;
+    if (res.status === 401) {
+      clearSession();
+      return null;
+    }
     const data = await res.json().catch(() => null);
     if (res.ok && data?.connected === true) return localSession;
   } catch {

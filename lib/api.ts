@@ -8,6 +8,7 @@ import type {
   BacktestJobParams,
 } from "./types";
 import type { Session } from "./session";
+import { markBotSessionExpired } from "./session";
 
 export class ApiError extends Error {
   status: number;
@@ -41,7 +42,8 @@ async function call<T>(
   }
 
   if (res.status === 401) {
-    throw new ApiError("API key rejected.", 401);
+    markBotSessionExpired();
+    throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
   }
   if (!res.ok) {
     throw new ApiError(`Request failed (${res.status}).`, res.status);
@@ -102,7 +104,8 @@ export async function closePosition(
   }
 
   if (res.status === 401) {
-    throw new ApiError("API key rejected.", 401);
+    markBotSessionExpired();
+    throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
   }
   if (res.status === 429) {
     throw new ApiError("Too many requests — slow down and try again.", 429);
@@ -163,7 +166,10 @@ async function downloadCsv(
     );
   }
 
-  if (res.status === 401) throw new ApiError("API key rejected.", 401);
+  if (res.status === 401) {
+    markBotSessionExpired();
+    throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
+  }
   if (!res.ok) throw new ApiError(`Request failed (${res.status}).`, res.status);
 
   const blob = await res.blob();
@@ -246,7 +252,10 @@ export async function startBacktest(
     );
   }
 
-  if (res.status === 401) throw new ApiError("API key rejected.", 401);
+  if (res.status === 401) {
+    markBotSessionExpired();
+    throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
+  }
   if (res.status === 400) {
     const data = await res.json().catch(() => ({}));
     throw new ApiError(data?.error ?? "Invalid backtest parameters.", 400);
