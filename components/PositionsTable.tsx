@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Loader2, Target, AlertTriangle } from "lucide-react";
 import type { DashboardPosition } from "@/lib/types";
 import type { Session } from "@/lib/session";
-import { closePosition, ApiError } from "@/lib/api";
+import { closePosition, reconcileTakeProfit, ApiError } from "@/lib/api";
 
 function fmtUsd(n: number, decimals = 2) {
   const sign = n < 0 ? "-" : "";
@@ -46,6 +46,12 @@ function nextTpLabel(position: DashboardPosition): string | null {
   const targets = position.takeProfits;
   if (!targets) return null;
 
+  if (position.tp2PriceReached && !position.tp2Filled && targets.tp2 > 0) {
+    return `Awaiting TP2 fill ${fmtUsd(targets.tp2, 4)}`;
+  }
+  if (position.tp1PriceReached && !position.tp1Filled && targets.tp1 > 0) {
+    return `Awaiting TP1 fill ${fmtUsd(targets.tp1, 4)}`;
+  }
   if (position.tp2Filled && targets.tp3 > 0) return `TP3 ${fmtUsd(targets.tp3, 4)}`;
   if (position.tp1Filled && targets.tp2 > 0) return `TP2 ${fmtUsd(targets.tp2, 4)}`;
   if (targets.tp1 > 0) return `TP1 ${fmtUsd(targets.tp1, 4)}`;
@@ -133,6 +139,58 @@ function CloseButton({
       {error && (
         <span className="text-[10px] text-[var(--short)] font-mono max-w-[160px] text-right leading-tight">
           {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ReconcileTpButton({
+  session,
+  symbol,
+  onReconciled,
+}: {
+  session: Session;
+  symbol: string;
+  onReconciled: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleClick() {
+    if (busy) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await reconcileTakeProfit(session, symbol);
+      if (!result.reconciled) {
+        setMessage(result.reason ?? "No confirmed TP fill found.");
+        return;
+      }
+      onReconciled();
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "TP sync failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        title="Verify exchange size and recover the TP status if a fill is confirmed"
+        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}
+      >
+        {busy ? <Loader2 size={10} className="animate-spin" /> : <Target size={10} />}
+        Sync TP
+      </button>
+      {message && (
+        <span className="text-[10px] text-[var(--warn)] max-w-[180px] leading-tight">
+          {message}
         </span>
       )}
     </div>
@@ -273,8 +331,15 @@ export function PositionsTable({
                       )}
                       {nextTarget && (
                         <span className="text-[10px] text-[var(--muted-dim)] whitespace-nowrap">
-                          Next {nextTarget}
+                          {p.tpWarning ? nextTarget : `Next ${nextTarget}`}
                         </span>
+                      )}
+                      {p.tpWarning && (
+                        <ReconcileTpButton
+                          session={session}
+                          symbol={p.fullSymbol}
+                          onReconciled={onPositionClosed}
+                        />
                       )}
                     </div>
                   </td>
