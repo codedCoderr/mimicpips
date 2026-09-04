@@ -75,6 +75,15 @@ export interface ClosePositionResult {
   reason?: string;
 }
 
+export interface ReconcileTakeProfitResult {
+  reconciled: boolean;
+  symbol: string;
+  tpStatus?: "TP1 HIT" | "TP2 HIT" | null;
+  liveContracts?: number;
+  originalAmount?: number;
+  reason?: string;
+}
+
 /**
  * Closes a single position at market price. The bot returns 409 (not 2xx)
  * when the close didn't go through — e.g. the position was already flat,
@@ -87,6 +96,42 @@ export async function closePosition(
   symbol: string
 ): Promise<ClosePositionResult> {
   const url = "/api/operator/bot/api/positions/close";
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ symbol }),
+    });
+  } catch {
+    throw new ApiError(
+      "Could not reach the bot. Check the server address and that it's running.",
+      0
+    );
+  }
+
+  if (res.status === 401) {
+    markBotSessionExpired();
+    throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
+  }
+  if (res.status === 429) {
+    throw new ApiError("Too many requests — slow down and try again.", 429);
+  }
+  if (!res.ok && res.status !== 409) {
+    throw new ApiError(`Request failed (${res.status}).`, res.status);
+  }
+
+  return res.json();
+}
+
+export async function reconcileTakeProfit(
+  session: Session,
+  symbol: string
+): Promise<ReconcileTakeProfitResult> {
+  void session;
+  const url = "/api/operator/bot/api/positions/tp/reconcile";
   let res: Response;
   try {
     res = await fetch(url, {
