@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, Target } from "lucide-react";
+import { X, Loader2, Target, AlertTriangle } from "lucide-react";
 import type { DashboardPosition } from "@/lib/types";
 import type { Session } from "@/lib/session";
 import { closePosition, ApiError } from "@/lib/api";
@@ -40,6 +40,16 @@ function formatDuration(openedAt: string, now: number): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   if (minutes > 0) return `${minutes}m`;
   return "<1m";
+}
+
+function nextTpLabel(position: DashboardPosition): string | null {
+  const targets = position.takeProfits;
+  if (!targets) return null;
+
+  if (position.tp2Filled && targets.tp3 > 0) return `TP3 ${fmtUsd(targets.tp3, 4)}`;
+  if (position.tp1Filled && targets.tp2 > 0) return `TP2 ${fmtUsd(targets.tp2, 4)}`;
+  if (targets.tp1 > 0) return `TP1 ${fmtUsd(targets.tp1, 4)}`;
+  return null;
 }
 
 /** Renders duration on a live 30s tick so open trades visibly age without a page refresh. */
@@ -187,6 +197,7 @@ export function PositionsTable({
             {positions.map((p) => {
               const pnlPositive = p.unrealizedPnl > 0;
               const pnlNegative = p.unrealizedPnl < 0;
+              const nextTarget = nextTpLabel(p);
               return (
                 <tr
                   key={p.fullSymbol}
@@ -233,23 +244,39 @@ export function PositionsTable({
                   <td className="px-4 py-3 tabular">
                     {p.liquidationDistancePct.toFixed(1)}%
                   </td>
-                  <td className="px-4 py-3">
-                    {p.tpStatus ? (
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-                        style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}
-                        title={
-                          p.tpStatus === "TP2 HIT"
-                            ? "TP1 and TP2 filled — running toward TP3"
-                            : "TP1 filled — running toward TP2"
-                        }
-                      >
-                        <Target size={10} />
-                        {p.tpStatus}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-[var(--muted-dim)]">—</span>
-                    )}
+                  <td className="px-4 py-3 min-w-[128px]">
+                    <div className="flex flex-col items-start gap-1">
+                      {p.tpStatus ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+                          style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}
+                          title={
+                            p.tpStatus === "TP2 HIT"
+                              ? "TP1 and TP2 filled; running toward TP3"
+                              : "TP1 filled; running toward TP2"
+                          }
+                        >
+                          <Target size={10} />
+                          {p.tpStatus}
+                        </span>
+                      ) : p.tpWarning ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+                          style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}
+                          title={p.tpWarning}
+                        >
+                          <AlertTriangle size={10} />
+                          TP TOUCHED
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--muted-dim)]">—</span>
+                      )}
+                      {nextTarget && (
+                        <span className="text-[10px] text-[var(--muted-dim)] whitespace-nowrap">
+                          Next {nextTarget}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span
