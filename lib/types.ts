@@ -14,9 +14,13 @@ export interface DashboardPosition {
   marginUsed: number;
   riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   openedAt: string;
+  takeProfits?: { tp1: number; tp2: number; tp3: number };
   tp1Filled: boolean;
   tp2Filled: boolean;
+  tp1PriceReached?: boolean;
+  tp2PriceReached?: boolean;
   tpStatus: "TP1 HIT" | "TP2 HIT" | null;
+  tpWarning?: string | null;
 }
 
 export interface TelegramStatus {
