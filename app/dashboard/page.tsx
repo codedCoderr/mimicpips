@@ -216,11 +216,13 @@ export default function DashboardPage () {
                 onPositionClosed={ refetch }
               />
               <TradeHistoryTable
+                session={ session }
                 trades={ trades }
                 loading={ tradesLoading }
                 error={ tradesError }
                 onLoadMore={ handleLoadMore }
                 hasMore={ hasMoreTrades }
+                onRepaired={ refetch }
               />
               <EquityChart data={ equityCurve } />
             </div>

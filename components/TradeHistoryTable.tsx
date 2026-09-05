@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Target, TrendingDown, RotateCw, ShieldCheck } from "lucide-react";
 import type { RecentTradeRow } from "@/lib/types";
+import type { Session } from "@/lib/session";
+import { ApiError, repairTradeAccounting } from "@/lib/api";
 
 function fmtUsd(n: number, decimals = 2) {
   const sign = n < 0 ? "-" : "";
@@ -85,20 +87,26 @@ function CloseReasonBadge({ reason }: { reason: string }) {
 }
 
 export function TradeHistoryTable({
+  session,
   trades,
   loading,
   error,
   onLoadMore,
   hasMore,
+  onRepaired,
 }: {
+  session: Session;
   trades: RecentTradeRow[] | null;
   loading: boolean;
   error: string | null;
   onLoadMore: () => void;
   hasMore: boolean;
+  onRepaired: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [symbolFilter, setSymbolFilter] = useState<string>("ALL");
+  const [repairingSymbol, setRepairingSymbol] = useState<string | null>(null);
+  const [repairMessage, setRepairMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
@@ -207,6 +215,24 @@ export function TradeHistoryTable({
               {filteredTrades.map((t) => {
                 const pnlPositive = t.pnl > 0;
                 const pnlNegative = t.pnl < 0;
+                const canRepair = Math.abs(t.pnl) < 0.000001;
+                async function handleRepair() {
+                  if (repairingSymbol) return;
+                  setRepairingSymbol(t.symbol);
+                  setRepairMessage(null);
+                  try {
+                    const result = await repairTradeAccounting(session, t.symbol);
+                    if (!result.repaired) {
+                      setRepairMessage(result.reason ?? "Accounting repair did not complete.");
+                      return;
+                    }
+                    onRepaired();
+                  } catch (err) {
+                    setRepairMessage(err instanceof ApiError ? err.message : "Accounting repair failed.");
+                  } finally {
+                    setRepairingSymbol(null);
+                  }
+                }
                 return (
                   <tr
                     key={t.id}
@@ -241,6 +267,25 @@ export function TradeHistoryTable({
                     >
                       {pnlPositive ? "+" : ""}
                       {fmtUsd(t.pnl)}
+                      {canRepair && (
+                        <div className="mt-1 flex flex-col items-start gap-1">
+                          <button
+                            type="button"
+                            onClick={handleRepair}
+                            disabled={repairingSymbol !== null}
+                            className="text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}
+                            title="Fetch exchange fills and recalculate this row"
+                          >
+                            {repairingSymbol === t.symbol ? "Repairing" : "Repair PnL"}
+                          </button>
+                          {repairMessage && repairingSymbol !== t.symbol && (
+                            <span className="text-[10px] text-[var(--warn)] max-w-[180px] leading-tight">
+                              {repairMessage}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap">
                       {timeAgo(t.exitTime, now)}
