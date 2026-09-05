@@ -15,6 +15,13 @@ function fmtUsd(n: number | null, decimals = 2) {
   })}`;
 }
 
+function fmtPrice(n: number | null | undefined) {
+  if (n === null || n === undefined) return "—";
+  const abs = Math.abs(n);
+  const decimals = abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
+  return fmtUsd(n, decimals);
+}
+
 export function LedgerRowsTable({ rows, loading }: { rows: LedgerRow[] | null; loading: boolean }) {
   const [symbolFilter, setSymbolFilter] = useState<string>("ALL");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -148,9 +155,9 @@ export function LedgerRowsTable({ rows, loading }: { rows: LedgerRow[] | null; l
                       </span>
                     </td>
                     <td className="px-4 py-2.5 tabular text-[var(--muted)]">
-                      {fmtUsd(r.entryPrice, 4)}
+                      {fmtPrice(r.entryPrice)}
                     </td>
-                    <td className="px-4 py-2.5 tabular">{fmtUsd(r.exitPrice, 4)}</td>
+                    <td className="px-4 py-2.5 tabular">{fmtPrice(r.exitPrice)}</td>
                     <td className="px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap">
                       {r.holdDuration}
                     </td>

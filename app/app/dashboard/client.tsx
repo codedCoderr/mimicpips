@@ -90,6 +90,13 @@ function fmtUsd ( n: number | null ): string {
   return `$${ n?.toLocaleString( "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) }`;
 }
 
+function fmtPrice ( n: number | null | undefined ): string {
+  if ( n === null || n === undefined ) return "—";
+  const abs = Math.abs( n );
+  const decimals = abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
+  return `$${ n.toLocaleString( "en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals } ) }`;
+}
+
 interface GateRowProps {
   label: string;
   met: boolean;
@@ -777,11 +784,11 @@ export function CopyTradingDashboardClient ( {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                          <div>In: { fmtUsd( e.entryPrice ?? 0 ) }</div>
+                          <div>In: { fmtPrice( e.entryPrice ) }</div>
                           <div>
                             Out:{ " " }
                             { ( e.exitPrice ?? 0 ) > 0
-                              ? fmtUsd( e.exitPrice )
+                              ? fmtPrice( e.exitPrice )
                               : e.isOpen
                                 ? "Active"
                             : "Closed" }
@@ -796,7 +803,7 @@ export function CopyTradingDashboardClient ( {
                           </div>
                           { e.stopLossPrice ? (
                             <div className="text-[10px] text-[var(--muted)]">
-                              Stop: { fmtUsd( e.stopLossPrice ) }
+                              Stop: { fmtPrice( e.stopLossPrice ) }
                               { e.stopLossType === "ATR" && e.atrMultiplier ? ` • ${ e.atrMultiplier }x ATR` : "" }
                               { stopDistancePct( e ) !== null ? ` • ${ Math.max( 0, stopDistancePct( e )! ).toFixed( 1 ) }% away` : "" }
                             </div>
