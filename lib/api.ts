@@ -162,6 +162,42 @@ export async function reconcileTakeProfit(
   return res.json();
 }
 
+export async function forceStopLossClose(
+  session: Session,
+  symbol: string
+): Promise<ClosePositionResult> {
+  void session;
+  const url = "/api/operator/bot/api/positions/sl/force-close";
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ symbol }),
+    });
+  } catch {
+    throw new ApiError(
+      "Could not reach the bot. Check the server address and that it's running.",
+      0
+    );
+  }
+
+  if (res.status === 401) {
+    markBotSessionExpired();
+    throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
+  }
+  if (res.status === 429) {
+    throw new ApiError("Too many requests — slow down and try again.", 429);
+  }
+  if (!res.ok && res.status !== 409) {
+    throw new ApiError(`Request failed (${res.status}).`, res.status);
+  }
+
+  return res.json();
+}
+
 export function checkHealth(session: Session): Promise<{ ok: boolean }> {
   return call(session, "/api/health");
 }
