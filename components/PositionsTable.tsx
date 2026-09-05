@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Loader2, Target, AlertTriangle } from "lucide-react";
 import type { DashboardPosition } from "@/lib/types";
 import type { Session } from "@/lib/session";
-import { closePosition, reconcileTakeProfit, ApiError } from "@/lib/api";
+import { closePosition, forceStopLossClose, reconcileTakeProfit, ApiError } from "@/lib/api";
 
 function fmtUsd(n: number, decimals = 2) {
   const sign = n < 0 ? "-" : "";
@@ -197,6 +197,77 @@ function ReconcileTpButton({
   );
 }
 
+function ForceStopLossButton({
+  session,
+  symbol,
+  onClosed,
+}: {
+  session: Session;
+  symbol: string;
+  onClosed: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirming) return;
+    const id = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(id);
+  }, [confirming]);
+
+  async function handleClick() {
+    if (busy) return;
+    if (!confirming) {
+      setConfirming(true);
+      setMessage(null);
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await forceStopLossClose(session, symbol);
+      if (!result.closed) {
+        setMessage(result.reason ?? "Force close did not complete.");
+        setConfirming(false);
+        return;
+      }
+      onClosed();
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "Force close failed.");
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        title={confirming ? "Click again to force close at market" : "Force close and record as SL hit"}
+        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        style={{
+          color: confirming ? "#fff" : "var(--short)",
+          background: confirming ? "var(--short)" : "transparent",
+          border: "1px solid var(--short-dim)",
+        }}
+      >
+        {busy ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+        {busy ? "Closing" : confirming ? "Confirm SL" : "Force SL"}
+      </button>
+      {message && (
+        <span className="text-[10px] text-[var(--short)] max-w-[180px] leading-tight">
+          {message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function PositionsTable({
   positions,
   session,
@@ -312,14 +383,21 @@ export function PositionsTable({
                         {p.stopLoss && p.stopLoss > 0 ? fmtUsd(p.stopLoss, 4) : "—"}
                       </span>
                       {p.stopLossWarning && (
-                        <span
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-                          style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}
-                          title={p.stopLossWarning}
-                        >
-                          <AlertTriangle size={10} />
-                          SL TOUCHED
-                        </span>
+                        <>
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+                            style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}
+                            title={p.stopLossWarning}
+                          >
+                            <AlertTriangle size={10} />
+                            SL TOUCHED
+                          </span>
+                          <ForceStopLossButton
+                            session={session}
+                            symbol={p.fullSymbol}
+                            onClosed={onPositionClosed}
+                          />
+                        </>
                       )}
                     </div>
                   </td>
