@@ -14,6 +14,13 @@ function fmtUsd(n: number, decimals = 2) {
   })}`;
 }
 
+function fmtPrice(n: number | null | undefined) {
+  const value = Number(n ?? 0);
+  const abs = Math.abs(value);
+  const decimals = abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
+  return fmtUsd(value, decimals);
+}
+
 function timeAgo(iso: string, now: number): string {
   const then = new Date(iso).getTime();
   if (isNaN(then)) return "—";
@@ -255,9 +262,9 @@ export function TradeHistoryTable({
                       </span>
                     </td>
                     <td className="px-4 py-2.5 tabular text-[var(--muted)]">
-                      {fmtUsd(t.entryPrice, 4)}
+                      {fmtPrice(t.entryPrice)}
                     </td>
-                    <td className="px-4 py-2.5 tabular">{fmtUsd(t.exitPrice, 4)}</td>
+                    <td className="px-4 py-2.5 tabular">{fmtPrice(t.exitPrice)}</td>
                     <td className="px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap">
                       {t.holdDuration}
                     </td>

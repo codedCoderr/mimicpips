@@ -14,6 +14,13 @@ function fmtUsd(n: number, decimals = 2) {
   })}`;
 }
 
+function fmtPrice(n: number | null | undefined) {
+  const value = Number(n ?? 0);
+  const abs = Math.abs(value);
+  const decimals = abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
+  return fmtUsd(value, decimals);
+}
+
 function riskColor(level: DashboardPosition["riskLevel"]) {
   switch (level) {
     case "LOW":
@@ -47,14 +54,14 @@ function nextTpLabel(position: DashboardPosition): string | null {
   if (!targets) return null;
 
   if (position.tp2PriceReached && !position.tp2Filled && targets.tp2 > 0) {
-    return `Awaiting TP2 fill ${fmtUsd(targets.tp2, 4)}`;
+    return `Awaiting TP2 fill ${fmtPrice(targets.tp2)}`;
   }
   if (position.tp1PriceReached && !position.tp1Filled && targets.tp1 > 0) {
-    return `Awaiting TP1 fill ${fmtUsd(targets.tp1, 4)}`;
+    return `Awaiting TP1 fill ${fmtPrice(targets.tp1)}`;
   }
-  if (position.tp2Filled && targets.tp3 > 0) return `TP3 ${fmtUsd(targets.tp3, 4)}`;
-  if (position.tp1Filled && targets.tp2 > 0) return `TP2 ${fmtUsd(targets.tp2, 4)}`;
-  if (targets.tp1 > 0) return `TP1 ${fmtUsd(targets.tp1, 4)}`;
+  if (position.tp2Filled && targets.tp3 > 0) return `TP3 ${fmtPrice(targets.tp3)}`;
+  if (position.tp1Filled && targets.tp2 > 0) return `TP2 ${fmtPrice(targets.tp2)}`;
+  if (targets.tp1 > 0) return `TP1 ${fmtPrice(targets.tp1)}`;
   return null;
 }
 
@@ -350,9 +357,9 @@ export function PositionsTable({
                     </span>
                   </td>
                   <td className="px-4 py-3 tabular text-[var(--muted)]">
-                    {fmtUsd(p.entryPrice, 4)}
+                    {fmtPrice(p.entryPrice)}
                   </td>
-                  <td className="px-4 py-3 tabular">{fmtUsd(p.currentPrice, 4)}</td>
+                  <td className="px-4 py-3 tabular">{fmtPrice(p.currentPrice)}</td>
                   <td className="px-4 py-3 tabular text-[var(--muted)]">
                     {p.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                   </td>
@@ -380,7 +387,7 @@ export function PositionsTable({
                             : "text-[var(--muted)]"
                         }
                       >
-                        {p.stopLoss && p.stopLoss > 0 ? fmtUsd(p.stopLoss, 4) : "—"}
+                        {p.stopLoss && p.stopLoss > 0 ? fmtPrice(p.stopLoss) : "—"}
                       </span>
                       {p.stopLossWarning && (
                         <>
