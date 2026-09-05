@@ -237,6 +237,7 @@ export function PositionsTable({
                 "Lev",
                 "PnL",
                 "Open for",
+                "SL",
                 "Liq. dist.",
                 "Progress",
                 "Risk",
@@ -298,6 +299,29 @@ export function PositionsTable({
                   </td>
                   <td className="px-4 py-3 tabular text-[var(--muted)] whitespace-nowrap">
                     {formatDuration(p.openedAt, now)}
+                  </td>
+                  <td className="px-4 py-3 tabular">
+                    <div className="flex flex-col items-start gap-1">
+                      <span
+                        className={
+                          p.stopLossPriceReached
+                            ? "text-[var(--short)] font-semibold"
+                            : "text-[var(--muted)]"
+                        }
+                      >
+                        {p.stopLoss && p.stopLoss > 0 ? fmtUsd(p.stopLoss, 4) : "—"}
+                      </span>
+                      {p.stopLossWarning && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
+                          style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}
+                          title={p.stopLossWarning}
+                        >
+                          <AlertTriangle size={10} />
+                          SL TOUCHED
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 tabular">
                     {p.liquidationDistancePct.toFixed(1)}%

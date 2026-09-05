@@ -11,6 +11,9 @@ export interface DashboardPosition {
   unrealizedPnlPct: number;
   liquidationPrice: number;
   liquidationDistancePct: number;
+  stopLoss?: number;
+  stopLossPriceReached?: boolean;
+  stopLossWarning?: string | null;
   marginUsed: number;
   riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   openedAt: string;
