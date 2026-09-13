@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 
 export const BOT_SESSION_COOKIE = "operator_bot_session";
-const BOT_SESSION_TTL_SECONDS = 60 * 60 * 12;
+const BOT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export interface OperatorBotSession {
   baseUrl: string;

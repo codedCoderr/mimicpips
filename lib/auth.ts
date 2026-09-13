@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify, JWTPayload } from "jose";
 
 const COOKIE_NAME = "operator_session";
-const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
 export interface SessionPayload extends JWTPayload {
   userId?: string;
