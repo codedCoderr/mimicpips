@@ -4,7 +4,22 @@ import { useEffect, useState } from "react";
 import { X, Loader2, Target, AlertTriangle } from "lucide-react";
 import type { DashboardPosition } from "@/lib/types";
 import type { Session } from "@/lib/session";
-import { closePosition, forceStopLossClose, reconcileTakeProfit, ApiError } from "@/lib/api";
+import {
+  closePosition,
+  forceStopLossClose,
+  reconcileTakeProfit,
+  ApiError,
+} from "@/lib/api";
+
+// Extend the type locally to ensure TS compiles if these fields aren't in DashboardPosition yet
+type PositionWithRunner = DashboardPosition & {
+  isRunner?: boolean;
+  tp3Filled?: boolean;
+  tp2Filled?: boolean;
+  tp1Filled?: boolean;
+  trailPct?: number;
+  tpStatus?: string;
+};
 
 function fmtUsd(n: number, decimals = 2) {
   const sign = n < 0 ? "-" : "";
@@ -17,7 +32,8 @@ function fmtUsd(n: number, decimals = 2) {
 function fmtPrice(n: number | null | undefined) {
   const value = Number(n ?? 0);
   const abs = Math.abs(value);
-  const decimals = abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
+  const decimals =
+    abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
   return fmtUsd(value, decimals);
 }
 
@@ -49,20 +65,68 @@ function formatDuration(openedAt: string, now: number): string {
   return "<1m";
 }
 
-function nextTpLabel(position: DashboardPosition): string | null {
-  const targets = position.takeProfits;
-  if (!targets) return null;
+/**
+ * Centralized progress logic prioritizing immutable database flags over live price.
+ */
+function getProgressInfo(p: PositionWithRunner) {
+  const targets = p.takeProfits;
 
-  if (position.tp2PriceReached && !position.tp2Filled && targets.tp2 > 0) {
-    return `Awaiting TP2 fill ${fmtPrice(targets.tp2)}`;
+  // 1. Runner / TP3 Active Check
+  if (p.isRunner || p.tp3Filled || p.tpStatus === "RUNNER ACTIVE") {
+    return {
+      statusLabel: "RUNNER ACTIVE",
+      statusTitle: "TP3 filled; trailing stop is active",
+      subtext: p.trailPct
+        ? `Trailing Stop: ${p.trailPct}%`
+        : "Trailing Stop Active",
+      isHit: true,
+    };
   }
-  if (position.tp1PriceReached && !position.tp1Filled && targets.tp1 > 0) {
-    return `Awaiting TP1 fill ${fmtPrice(targets.tp1)}`;
+
+  // 2. TP2 Hit Check
+  if (p.tp2Filled || p.tpStatus === "TP2 HIT") {
+    return {
+      statusLabel: "TP2 HIT",
+      statusTitle: "TP1 and TP2 filled; running toward TP3",
+      subtext: targets?.tp3 ? `Next TP3 ${fmtPrice(targets.tp3)}` : "",
+      isHit: true,
+    };
   }
-  if (position.tp2Filled && targets.tp3 > 0) return `TP3 ${fmtPrice(targets.tp3)}`;
-  if (position.tp1Filled && targets.tp2 > 0) return `TP2 ${fmtPrice(targets.tp2)}`;
-  if (targets.tp1 > 0) return `TP1 ${fmtPrice(targets.tp1)}`;
-  return null;
+
+  // 3. TP1 Hit Check
+  if (p.tp1Filled || p.tpStatus === "TP1 HIT") {
+    return {
+      statusLabel: "TP1 HIT",
+      statusTitle: "TP1 filled; running toward TP2",
+      subtext: targets?.tp2 ? `Next TP2 ${fmtPrice(targets.tp2)}` : "",
+      isHit: true,
+    };
+  }
+
+  // Awaiting fills
+  if (p.tp2PriceReached && !p.tp2Filled && targets && targets.tp2 > 0) {
+    return {
+      statusLabel: null,
+      statusTitle: "",
+      subtext: `Awaiting TP2 fill ${fmtPrice(targets.tp2)}`,
+      isHit: false,
+    };
+  }
+  if (p.tp1PriceReached && !p.tp1Filled && targets && targets.tp1 > 0) {
+    return {
+      statusLabel: null,
+      statusTitle: "",
+      subtext: `Awaiting TP1 fill ${fmtPrice(targets.tp1)}`,
+      isHit: false,
+    };
+  }
+
+  return {
+    statusLabel: null,
+    statusTitle: "",
+    subtext: targets?.tp1 ? `Next TP1 ${fmtPrice(targets.tp1)}` : "",
+    isHit: false,
+  };
 }
 
 /** Renders duration on a live 30s tick so open trades visibly age without a page refresh. */
@@ -88,8 +152,6 @@ function CloseButton({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Auto-cancel the confirm state after a few seconds so a stray click
-  // hours later doesn't land on an armed button.
   useEffect(() => {
     if (!confirming) return;
     const id = setTimeout(() => setConfirming(false), 4000);
@@ -123,28 +185,29 @@ function CloseButton({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className='flex flex-col items-end gap-1'>
       <button
-        type="button"
+        type='button'
         onClick={handleClick}
         disabled={busy}
         title={confirming ? "Click again to confirm" : "Close this position"}
-        className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className='flex items-center gap-1 text-[11px] font-semibold px-2 py-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
         style={{
           color: confirming ? "#fff" : "var(--short)",
           background: confirming ? "var(--short)" : "transparent",
-          border: `1px solid ${confirming ? "var(--short)" : "var(--short-dim)"}`,
-        }}
-      >
+          border: `1px solid ${
+            confirming ? "var(--short)" : "var(--short-dim)"
+          }`,
+        }}>
         {busy ? (
-          <Loader2 size={12} className="animate-spin" />
+          <Loader2 size={12} className='animate-spin' />
         ) : (
           <X size={12} strokeWidth={2.5} />
         )}
         {busy ? "Closing…" : confirming ? "Confirm" : "Close"}
       </button>
       {error && (
-        <span className="text-[10px] text-[var(--short)] font-mono max-w-[160px] text-right leading-tight">
+        <span className='text-[10px] text-[var(--short)] font-mono max-w-[160px] text-right leading-tight'>
           {error}
         </span>
       )}
@@ -183,20 +246,23 @@ function ReconcileTpButton({
   }
 
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div className='flex flex-col items-start gap-1'>
       <button
-        type="button"
+        type='button'
         onClick={handleClick}
         disabled={busy}
-        title="Verify exchange size and recover the TP status if a fill is confirmed"
-        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}
-      >
-        {busy ? <Loader2 size={10} className="animate-spin" /> : <Target size={10} />}
+        title='Verify exchange size and recover the TP status if a fill is confirmed'
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+        style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}>
+        {busy ? (
+          <Loader2 size={10} className='animate-spin' />
+        ) : (
+          <Target size={10} />
+        )}
         Sync TP
       </button>
       {message && (
-        <span className="text-[10px] text-[var(--warn)] max-w-[180px] leading-tight">
+        <span className='text-[10px] text-[var(--warn)] max-w-[180px] leading-tight'>
           {message}
         </span>
       )}
@@ -250,24 +316,31 @@ function ForceStopLossButton({
   }
 
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div className='flex flex-col items-start gap-1'>
       <button
-        type="button"
+        type='button'
         onClick={handleClick}
         disabled={busy}
-        title={confirming ? "Click again to force close at market" : "Force close and record as SL hit"}
-        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        title={
+          confirming
+            ? "Click again to force close at market"
+            : "Force close and record as SL hit"
+        }
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
         style={{
           color: confirming ? "#fff" : "var(--short)",
           background: confirming ? "var(--short)" : "transparent",
           border: "1px solid var(--short-dim)",
-        }}
-      >
-        {busy ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+        }}>
+        {busy ? (
+          <Loader2 size={10} className='animate-spin' />
+        ) : (
+          <X size={10} />
+        )}
         {busy ? "Closing" : confirming ? "Confirm SL" : "Force SL"}
       </button>
       {message && (
-        <span className="text-[10px] text-[var(--short)] max-w-[180px] leading-tight">
+        <span className='text-[10px] text-[var(--short)] max-w-[180px] leading-tight'>
           {message}
         </span>
       )}
@@ -288,9 +361,9 @@ export function PositionsTable({
 
   if (positions.length === 0) {
     return (
-      <div className="panel p-8 flex flex-col items-center justify-center gap-2 text-center">
-        <span className="eyebrow">Positions</span>
-        <p className="text-sm text-[var(--muted)] font-mono mt-1">
+      <div className='panel p-8 flex flex-col items-center justify-center gap-2 text-center'>
+        <span className='eyebrow'>Positions</span>
+        <p className='text-sm text-[var(--muted)] font-mono mt-1'>
           No open positions. The bot is scanning for entries.
         </p>
       </div>
@@ -298,14 +371,14 @@ export function PositionsTable({
   }
 
   return (
-    <div className="panel overflow-hidden">
-      <div className="px-5 py-3 border-b border-[var(--hairline)]">
-        <span className="eyebrow">Open Positions ({positions.length})</span>
+    <div className='panel overflow-hidden'>
+      <div className='px-5 py-3 border-b border-[var(--hairline)]'>
+        <span className='eyebrow'>Open Positions ({positions.length})</span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+      <div className='overflow-x-auto'>
+        <table className='w-full text-sm'>
           <thead>
-            <tr className="border-b border-[var(--hairline)]">
+            <tr className='border-b border-[var(--hairline)]'>
               {[
                 "Symbol",
                 "Side",
@@ -323,79 +396,94 @@ export function PositionsTable({
               ].map((h) => (
                 <th
                   key={h}
-                  className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap"
-                >
+                  className='eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap'>
                   {h}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="font-mono">
-            {positions.map((p) => {
+          <tbody className='font-mono'>
+            {positions.map((p: any) => {
               const pnlPositive = p.unrealizedPnl > 0;
               const pnlNegative = p.unrealizedPnl < 0;
-              const nextTarget = nextTpLabel(p);
+              const progress = getProgressInfo(p);
+
               return (
                 <tr
                   key={p.fullSymbol}
-                  className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors"
-                >
-                  <td className="px-4 py-3 font-semibold whitespace-nowrap">
+                  className='border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors'>
+                  <td className='px-4 py-3 font-semibold whitespace-nowrap'>
                     {p.symbol}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className='px-4 py-3'>
                     <span
-                      className="text-[11px] font-semibold px-1.5 py-0.5"
+                      className='text-[11px] font-semibold px-1.5 py-0.5'
                       style={{
-                        color: p.side === "LONG" ? "var(--long)" : "var(--short)",
+                        color:
+                          p.side === "LONG" ? "var(--long)" : "var(--short)",
                         border: `1px solid ${
-                          p.side === "LONG" ? "var(--long-dim)" : "var(--short-dim)"
+                          p.side === "LONG"
+                            ? "var(--long-dim)"
+                            : "var(--short-dim)"
                         }`,
-                      }}
-                    >
+                      }}>
                       {p.side}
                     </span>
                   </td>
-                  <td className="px-4 py-3 tabular text-[var(--muted)]">
+                  <td className='px-4 py-3 tabular text-[var(--muted)]'>
                     {fmtPrice(p.entryPrice)}
                   </td>
-                  <td className="px-4 py-3 tabular">{fmtPrice(p.currentPrice)}</td>
-                  <td className="px-4 py-3 tabular text-[var(--muted)]">
-                    {p.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+                  <td className='px-4 py-3 tabular'>
+                    {fmtPrice(p.currentPrice)}
                   </td>
-                  <td className="px-4 py-3 tabular text-[var(--muted)]">{p.leverage}x</td>
+                  <td className='px-4 py-3 tabular text-[var(--muted)]'>
+                    {p.amount.toLocaleString("en-US", {
+                      maximumFractionDigits: 4,
+                    })}
+                  </td>
+                  <td className='px-4 py-3 tabular text-[var(--muted)]'>
+                    {p.leverage}x
+                  </td>
                   <td
-                    className="px-4 py-3 tabular font-semibold whitespace-nowrap"
-                    style={{ color: pnlPositive ? "var(--long)" : pnlNegative ? "var(--short)" : "var(--muted)" }}
-                  >
+                    className='px-4 py-3 tabular font-semibold whitespace-nowrap'
+                    style={{
+                      color: pnlPositive
+                        ? "var(--long)"
+                        : pnlNegative
+                        ? "var(--short)"
+                        : "var(--muted)",
+                    }}>
                     {pnlPositive ? "+" : ""}
                     {fmtUsd(p.unrealizedPnl)}
-                    <span className="text-[10px] opacity-70 ml-1">
+                    <span className='text-[10px] opacity-70 ml-1'>
                       ({pnlPositive ? "+" : ""}
                       {p.unrealizedPnlPct.toFixed(1)}%)
                     </span>
                   </td>
-                  <td className="px-4 py-3 tabular text-[var(--muted)] whitespace-nowrap">
+                  <td className='px-4 py-3 tabular text-[var(--muted)] whitespace-nowrap'>
                     {formatDuration(p.openedAt, now)}
                   </td>
-                  <td className="px-4 py-3 tabular">
-                    <div className="flex flex-col items-start gap-1">
+                  <td className='px-4 py-3 tabular'>
+                    <div className='flex flex-col items-start gap-1'>
                       <span
                         className={
                           p.stopLossPriceReached
                             ? "text-[var(--short)] font-semibold"
                             : "text-[var(--muted)]"
-                        }
-                      >
-                        {p.stopLoss && p.stopLoss > 0 ? fmtPrice(p.stopLoss) : "—"}
+                        }>
+                        {p.stopLoss && p.stopLoss > 0
+                          ? fmtPrice(p.stopLoss)
+                          : "—"}
                       </span>
                       {p.stopLossWarning && (
                         <>
                           <span
-                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-                            style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}
-                            title={p.stopLossWarning}
-                          >
+                            className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5'
+                            style={{
+                              color: "var(--short)",
+                              border: "1px solid var(--short-dim)",
+                            }}
+                            title={p.stopLossWarning}>
                             <AlertTriangle size={10} />
                             SL TOUCHED
                           </span>
@@ -408,39 +496,41 @@ export function PositionsTable({
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 tabular">
+                  <td className='px-4 py-3 tabular'>
                     {p.liquidationDistancePct.toFixed(1)}%
                   </td>
-                  <td className="px-4 py-3 min-w-[128px]">
-                    <div className="flex flex-col items-start gap-1">
-                      {p.tpStatus ? (
+                  <td className='px-4 py-3 min-w-[128px]'>
+                    <div className='flex flex-col items-start gap-1'>
+                      {progress.isHit ? (
                         <span
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-                          style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}
-                          title={
-                            p.tpStatus === "TP2 HIT"
-                              ? "TP1 and TP2 filled; running toward TP3"
-                              : "TP1 filled; running toward TP2"
-                          }
-                        >
+                          className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5'
+                          style={{
+                            color: "var(--long)",
+                            border: "1px solid var(--long-dim)",
+                          }}
+                          title={progress.statusTitle}>
                           <Target size={10} />
-                          {p.tpStatus}
+                          {progress.statusLabel}
                         </span>
                       ) : p.tpWarning ? (
                         <span
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-                          style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}
-                          title={p.tpWarning}
-                        >
+                          className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5'
+                          style={{
+                            color: "var(--warn)",
+                            border: "1px solid var(--warn-dim)",
+                          }}
+                          title={p.tpWarning}>
                           <AlertTriangle size={10} />
                           TP TOUCHED
                         </span>
                       ) : (
-                        <span className="text-[10px] text-[var(--muted-dim)]">—</span>
+                        <span className='text-[10px] text-[var(--muted-dim)]'>
+                          —
+                        </span>
                       )}
-                      {nextTarget && (
-                        <span className="text-[10px] text-[var(--muted-dim)] whitespace-nowrap">
-                          {p.tpWarning ? nextTarget : `Next ${nextTarget}`}
+                      {progress.subtext && (
+                        <span className='text-[10px] text-[var(--muted-dim)] whitespace-nowrap'>
+                          {progress.subtext}
                         </span>
                       )}
                       {p.tpWarning && (
@@ -452,18 +542,17 @@ export function PositionsTable({
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className='px-4 py-3'>
                     <span
-                      className="text-[10px] font-semibold px-1.5 py-0.5"
+                      className='text-[10px] font-semibold px-1.5 py-0.5'
                       style={{
                         color: riskColor(p.riskLevel),
                         border: `1px solid ${riskColor(p.riskLevel)}`,
-                      }}
-                    >
+                      }}>
                       {p.riskLevel}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className='px-4 py-3'>
                     <CloseButton
                       session={session}
                       symbol={p.fullSymbol}

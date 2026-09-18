@@ -17,7 +17,8 @@ function fmtUsd(n: number, decimals = 2) {
 function fmtPrice(n: number | null | undefined) {
   const value = Number(n ?? 0);
   const abs = Math.abs(value);
-  const decimals = abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
+  const decimals =
+    abs === 0 ? 2 : abs < 0.001 ? 8 : abs < 0.01 ? 6 : abs < 1 ? 4 : 2;
   return fmtUsd(value, decimals);
 }
 
@@ -41,56 +42,82 @@ function timeAgo(iso: string, now: number): string {
  * glance rather than read word-by-word. Falls back to plain text for any
  * reason string the bot reports that isn't one of the known shapes.
  */
-function CloseReasonBadge({ reason }: { reason: string }) {
-  if (!reason) return <span className="text-[var(--muted)]">—</span>;
+function CloseReasonBadge({ reason, pnl }: { reason: string; pnl?: number }) {
+  if (!reason) return <span className='text-[var(--muted)]'>—</span>;
 
   const upper = reason.toUpperCase();
+  const isPositivePnl = (pnl ?? 0) > 0;
 
-  if (upper.includes("TP")) {
+  // RUNNER or TP Exits
+  if (upper.includes("RUNNER")) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-        style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}
-      >
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded'
+        style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}>
         <Target size={10} />
-        {reason}
+        RUNNER CLOSED
       </span>
     );
   }
-  if (upper.includes("SL")) {
+
+  if (upper.includes("TP2")) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-        style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}
-      >
-        <TrendingDown size={10} />
-        {reason}
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded'
+        style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}>
+        <Target size={10} />
+        TP2 HIT
       </span>
     );
   }
+
+  if (upper.includes("TP1") || upper.includes("TP3")) {
+    return (
+      <span
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded'
+        style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}>
+        <Target size={10} />
+        {upper.includes("TP3") ? "TP3 HIT" : "TP1 HIT"}
+      </span>
+    );
+  }
+
+  // Handle SL HIT / BREAKEVEN
+  if (upper.includes("SL") || upper.includes("STOP")) {
+    // Safety check: If trade made money, render as TP/Runner instead of SL HIT
+    if (isPositivePnl) {
+      return (
+        <span
+          className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded'
+          style={{ color: "var(--long)", border: "1px solid var(--long-dim)" }}>
+          <Target size={10} />
+          TP HIT
+        </span>
+      );
+    }
+
+    return (
+      <span
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded'
+        style={{ color: "var(--short)", border: "1px solid var(--short-dim)" }}>
+        <TrendingDown size={10} />
+        SL HIT
+      </span>
+    );
+  }
+
   if (upper.includes("FLIP")) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-        style={{ color: "var(--warn)", border: "1px solid var(--warn)" }}
-      >
+        className='inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded'
+        style={{ color: "var(--warn)", border: "1px solid var(--warn)" }}>
         <RotateCw size={10} />
         {reason}
       </span>
     );
   }
-  if (upper.includes("BREAKEVEN")) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5"
-        style={{ color: "var(--muted)", border: "1px solid var(--hairline-bright)" }}
-      >
-        <ShieldCheck size={10} />
-        {reason}
-      </span>
-    );
-  }
-  return <span className="text-[var(--muted)] text-xs">{reason}</span>;
+
+  return <span className='text-[var(--muted)] text-xs'>{reason}</span>;
 }
 
 export function TradeHistoryTable({
@@ -159,18 +186,17 @@ export function TradeHistoryTable({
   }, [trades, symbolFilter]);
 
   return (
-    <div className="panel overflow-hidden">
-      <div className="px-5 py-3 border-b border-[var(--hairline)] flex items-center justify-between gap-3">
-        <span className="eyebrow">Recent Trades</span>
-        <div className="flex items-center gap-3">
+    <div className='panel overflow-hidden'>
+      <div className='px-5 py-3 border-b border-[var(--hairline)] flex items-center justify-between gap-3'>
+        <span className='eyebrow'>Recent Trades</span>
+        <div className='flex items-center gap-3'>
           {symbols.length > 1 && (
             <select
               value={symbolFilter}
               onChange={(e) => setSymbolFilter(e.target.value)}
-              className="bg-[var(--panel-raised)] border border-[var(--hairline)] text-[11px] font-mono
-                         text-[var(--muted)] px-2 py-1 focus:outline-none focus:border-[var(--long)] transition-colors"
-            >
-              <option value="ALL">All symbols</option>
+              className='bg-[var(--panel-raised)] border border-[var(--hairline)] text-[11px] font-mono
+                         text-[var(--muted)] px-2 py-1 focus:outline-none focus:border-[var(--long)] transition-colors'>
+              <option value='ALL'>All symbols</option>
               {symbols.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -179,46 +205,53 @@ export function TradeHistoryTable({
             </select>
           )}
           <a
-            href="/dashboard/ledger"
-            className="text-[11px] font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors whitespace-nowrap"
-          >
+            href='/dashboard/ledger'
+            className='text-[11px] font-mono text-[var(--muted)] hover:text-[var(--text)] transition-colors whitespace-nowrap'>
             Full ledger →
           </a>
         </div>
       </div>
 
       {error && (
-        <div className="p-4">
-          <p className="text-xs font-mono text-[var(--short)]">{error}</p>
+        <div className='p-4'>
+          <p className='text-xs font-mono text-[var(--short)]'>{error}</p>
         </div>
       )}
 
       {!error && !loading && filteredTrades && filteredTrades.length === 0 && (
-        <div className="p-8 flex flex-col items-center justify-center gap-2 text-center">
-          <p className="text-sm text-[var(--muted)] font-mono">
-            {symbolFilter === "ALL" ? "No closed trades yet." : `No closed trades for ${symbolFilter}.`}
+        <div className='p-8 flex flex-col items-center justify-center gap-2 text-center'>
+          <p className='text-sm text-[var(--muted)] font-mono'>
+            {symbolFilter === "ALL"
+              ? "No closed trades yet."
+              : `No closed trades for ${symbolFilter}.`}
           </p>
         </div>
       )}
 
       {!error && filteredTrades && filteredTrades.length > 0 && (
-        <div className="overflow-x-auto max-h-[400px]">
-          <table className="w-full text-sm relative">
-            <thead className="sticky top-0 bg-[var(--panel)] z-10">
-              <tr className="border-b border-[var(--hairline)]">
-                {["Symbol", "Side", "Entry", "Exit", "Held", "PnL", "Closed", "Reason"].map(
-                  (h) => (
-                    <th
-                      key={h}
-                      className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap"
-                    >
-                      {h}
-                    </th>
-                  )
-                )}
+        <div className='overflow-x-auto max-h-[400px]'>
+          <table className='w-full text-sm relative'>
+            <thead className='sticky top-0 bg-[var(--panel)] z-10'>
+              <tr className='border-b border-[var(--hairline)]'>
+                {[
+                  "Symbol",
+                  "Side",
+                  "Entry",
+                  "Exit",
+                  "Held",
+                  "PnL",
+                  "Closed",
+                  "Reason",
+                ].map((h) => (
+                  <th
+                    key={h}
+                    className='eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap'>
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="font-mono">
+            <tbody className='font-mono'>
               {filteredTrades.map((t) => {
                 const pnlPositive = t.pnl > 0;
                 const pnlNegative = t.pnl < 0;
@@ -228,14 +261,23 @@ export function TradeHistoryTable({
                   setRepairingSymbol(t.symbol);
                   setRepairMessage(null);
                   try {
-                    const result = await repairTradeAccounting(session, t.symbol);
+                    const result = await repairTradeAccounting(
+                      session,
+                      t.symbol
+                    );
                     if (!result.repaired) {
-                      setRepairMessage(result.reason ?? "Accounting repair did not complete.");
+                      setRepairMessage(
+                        result.reason ?? "Accounting repair did not complete."
+                      );
                       return;
                     }
                     onRepaired();
                   } catch (err) {
-                    setRepairMessage(err instanceof ApiError ? err.message : "Accounting repair failed.");
+                    setRepairMessage(
+                      err instanceof ApiError
+                        ? err.message
+                        : "Accounting repair failed."
+                    );
                   } finally {
                     setRepairingSymbol(null);
                   }
@@ -243,61 +285,73 @@ export function TradeHistoryTable({
                 return (
                   <tr
                     key={t.id}
-                    className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors"
-                  >
-                    <td className="px-4 py-2.5 font-semibold whitespace-nowrap">
+                    className='border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors'>
+                    <td className='px-4 py-2.5 font-semibold whitespace-nowrap'>
                       {t.symbol}
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className='px-4 py-2.5'>
                       <span
-                        className="text-[10px] font-semibold px-1.5 py-0.5"
+                        className='text-[10px] font-semibold px-1.5 py-0.5'
                         style={{
-                          color: t.side === "LONG" ? "var(--long)" : "var(--short)",
+                          color:
+                            t.side === "LONG" ? "var(--long)" : "var(--short)",
                           border: `1px solid ${
-                            t.side === "LONG" ? "var(--long-dim)" : "var(--short-dim)"
+                            t.side === "LONG"
+                              ? "var(--long-dim)"
+                              : "var(--short-dim)"
                           }`,
-                        }}
-                      >
+                        }}>
                         {t.side}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 tabular text-[var(--muted)]">
+                    <td className='px-4 py-2.5 tabular text-[var(--muted)]'>
                       {fmtPrice(t.entryPrice)}
                     </td>
-                    <td className="px-4 py-2.5 tabular">{fmtPrice(t.exitPrice)}</td>
-                    <td className="px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap">
+                    <td className='px-4 py-2.5 tabular'>
+                      {fmtPrice(t.exitPrice)}
+                    </td>
+                    <td className='px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap'>
                       {t.holdDuration}
                     </td>
                     <td
-                      className="px-4 py-2.5 tabular font-semibold whitespace-nowrap"
-                      style={{ color: pnlPositive ? "var(--long)" : pnlNegative ? "var(--short)" : "var(--muted)" }}
-                    >
+                      className='px-4 py-2.5 tabular font-semibold whitespace-nowrap'
+                      style={{
+                        color: pnlPositive
+                          ? "var(--long)"
+                          : pnlNegative
+                          ? "var(--short)"
+                          : "var(--muted)",
+                      }}>
                       {pnlPositive ? "+" : ""}
                       {fmtUsd(t.pnl)}
                       {canRepair && (
-                        <div className="mt-1 flex flex-col items-start gap-1">
+                        <div className='mt-1 flex flex-col items-start gap-1'>
                           <button
-                            type="button"
+                            type='button'
                             onClick={handleRepair}
                             disabled={repairingSymbol !== null}
-                            className="text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            style={{ color: "var(--warn)", border: "1px solid var(--warn-dim)" }}
-                            title="Fetch exchange fills and recalculate this row"
-                          >
-                            {repairingSymbol === t.symbol ? "Repairing" : "Repair PnL"}
+                            className='text-[10px] font-semibold px-1.5 py-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+                            style={{
+                              color: "var(--warn)",
+                              border: "1px solid var(--warn-dim)",
+                            }}
+                            title='Fetch exchange fills and recalculate this row'>
+                            {repairingSymbol === t.symbol
+                              ? "Repairing"
+                              : "Repair PnL"}
                           </button>
                           {repairMessage && repairingSymbol !== t.symbol && (
-                            <span className="text-[10px] text-[var(--warn)] max-w-[180px] leading-tight">
+                            <span className='text-[10px] text-[var(--warn)] max-w-[180px] leading-tight'>
                               {repairMessage}
                             </span>
                           )}
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap">
+                    <td className='px-4 py-2.5 tabular text-[var(--muted)] whitespace-nowrap'>
                       {timeAgo(t.exitTime, now)}
                     </td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">
+                    <td className='px-4 py-2.5 whitespace-nowrap'>
                       <CloseReasonBadge reason={t.closeReason} />
                     </td>
                   </tr>
@@ -307,11 +361,15 @@ export function TradeHistoryTable({
           </table>
           {/* Scroll Target — only meaningful when not filtering, since
               filtering is done client-side over already-loaded trades */}
-          {symbolFilter === "ALL" && <div ref={sentinelCallbackRef} className="h-4 w-full" />}
+          {symbolFilter === "ALL" && (
+            <div ref={sentinelCallbackRef} className='h-4 w-full' />
+          )}
           {loading && (
-             <div className="p-4 text-center">
-                <p className="text-xs font-mono text-[var(--muted)]">Loading more trades...</p>
-             </div>
+            <div className='p-4 text-center'>
+              <p className='text-xs font-mono text-[var(--muted)]'>
+                Loading more trades...
+              </p>
+            </div>
           )}
         </div>
       )}

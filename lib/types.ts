@@ -22,7 +22,7 @@ export interface DashboardPosition {
   tp2Filled: boolean;
   tp1PriceReached?: boolean;
   tp2PriceReached?: boolean;
-  tpStatus: "TP1 HIT" | "TP2 HIT" | null;
+  tpStatus: "TP1 HIT" | "TP2 HIT" | "RUNNER ACTIVE" | null;
   tpWarning?: string | null;
 }
 
@@ -59,7 +59,7 @@ export interface RiskStatus {
   killSwitch: boolean;
   dailyLimit: boolean;
   tradingPaused: boolean;
-  tradingHalted:boolean;
+  tradingHalted: boolean;
   drawdownPct: number;
   peakBalance: number;
   currentWalletBalance: number;
