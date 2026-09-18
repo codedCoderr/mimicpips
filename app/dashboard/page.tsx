@@ -3,7 +3,11 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { BOT_SESSION_EXPIRED_EVENT, loadVerifiedSession, type Session } from "@/lib/session";
+import {
+  BOT_SESSION_EXPIRED_EVENT,
+  loadVerifiedSession,
+  type Session,
+} from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
 import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
@@ -14,225 +18,275 @@ import { OperatorHeader } from "@/components/OperatorHeader";
 
 // Dynamically import heavy UI panels to eliminate layout shift and reduce initial JS bundle size
 const FollowersSummaryPanel = dynamic(
-  () => import( "@/components/FollowersSummaryPanel" ).then( ( mod ) => mod.FollowersSummaryPanel ),
-  { ssr: false, loading: () => <div className="h-24 panel animate-pulse" /> }
+  () =>
+    import("@/components/FollowersSummaryPanel").then(
+      (mod) => mod.FollowersSummaryPanel
+    ),
+  { ssr: false, loading: () => <div className='h-24 panel animate-pulse' /> }
 );
 
 const PositionsTable = dynamic(
-  () => import( "@/components/PositionsTable" ).then( ( mod ) => mod.PositionsTable ),
-  { ssr: false, loading: () => <div className="h-48 panel animate-pulse" /> }
+  () => import("@/components/PositionsTable").then((mod) => mod.PositionsTable),
+  { ssr: false, loading: () => <div className='h-48 panel animate-pulse' /> }
 );
 
 const TradeHistoryTable = dynamic(
-  () => import( "@/components/TradeHistoryTable" ).then( ( mod ) => mod.TradeHistoryTable ),
-  { ssr: false, loading: () => <div className="h-64 panel animate-pulse" /> }
+  () =>
+    import("@/components/TradeHistoryTable").then(
+      (mod) => mod.TradeHistoryTable
+    ),
+  { ssr: false, loading: () => <div className='h-64 panel animate-pulse' /> }
 );
 
 const EquityChart = dynamic(
-  () => import( "@/components/EquityChart" ).then( ( mod ) => mod.EquityChart ),
-  { ssr: false, loading: () => <div className="h-[300px] panel animate-pulse" /> }
+  () => import("@/components/EquityChart").then((mod) => mod.EquityChart),
+  {
+    ssr: false,
+    loading: () => <div className='h-[300px] panel animate-pulse' />,
+  }
 );
 
 const KillSwitch = dynamic(
-  () => import( "@/components/KillSwitch" ).then( ( mod ) => mod.KillSwitch ),
-  { ssr: false, loading: () => <div className="h-32 panel animate-pulse" /> }
+  () => import("@/components/KillSwitch").then((mod) => mod.KillSwitch),
+  { ssr: false, loading: () => <div className='h-32 panel animate-pulse' /> }
 );
 
 const RiskPanel = dynamic(
-  () => import( "@/components/RiskPanel" ).then( ( mod ) => mod.RiskPanel ),
-  { ssr: false, loading: () => <div className="h-48 panel animate-pulse" /> }
+  () => import("@/components/RiskPanel").then((mod) => mod.RiskPanel),
+  { ssr: false, loading: () => <div className='h-48 panel animate-pulse' /> }
 );
 
-export default function DashboardPage () {
+export default function DashboardPage() {
   const router = useRouter();
-  const [ session, setSession ] = useState<Session | null>( null );
-  const [ ready, setReady ] = useState( false );
+  const [session, setSession] = useState<Session | null>(null);
+  const [ready, setReady] = useState(false);
 
-  useEffect( () => {
+  useEffect(() => {
     let cancelled = false;
     loadVerifiedSession().then((existing) => {
       if (cancelled) return;
-      if ( !existing ) {
-        router.replace( "/setup" );
+      if (!existing) {
+        router.replace("/setup");
         return;
       }
-      setSession( existing );
-      setReady( true );
+      setSession(existing);
+      setReady(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [ router ] );
+  }, [router]);
 
-  useEffect( () => {
-    const handleExpired = () => router.replace( "/setup" );
-    window.addEventListener( BOT_SESSION_EXPIRED_EVENT, handleExpired );
-    return () => window.removeEventListener( BOT_SESSION_EXPIRED_EVENT, handleExpired );
-  }, [ router ] );
+  useEffect(() => {
+    const handleExpired = () => router.replace("/setup");
+    window.addEventListener(BOT_SESSION_EXPIRED_EVENT, handleExpired);
+    return () =>
+      window.removeEventListener(BOT_SESSION_EXPIRED_EVENT, handleExpired);
+  }, [router]);
 
-  const handleBotEventRef = useRef<( event: import( "@/lib/types" ).BotEvent ) => void>( () => { } );
-  const handleBotEvent = useCallback( ( event: import( "@/lib/types" ).BotEvent ) => {
-    handleBotEventRef.current( event );
-  }, [] );
+  const handleBotEventRef = useRef<
+    (event: import("@/lib/types").BotEvent) => void
+  >(() => {});
+  const handleBotEvent = useCallback(
+    (event: import("@/lib/types").BotEvent) => {
+      handleBotEventRef.current(event);
+    },
+    []
+  );
 
-  const { snapshot, connState, equityCurve, refreshSnapshot } = useLiveSnapshot( session, handleBotEvent );
+  const { snapshot, connState, equityCurve, refreshSnapshot } = useLiveSnapshot(
+    session,
+    handleBotEvent
+  );
 
   const displaySnapshot: DashboardSnapshot | null = snapshot;
 
   // --- Trade History Pagination State ---
-  const [ trades, setTrades ] = useState<RecentTradeRow[] | null>( null );
-  const [ tradesLoading, setTradesLoading ] = useState( true );
-  const [ tradesError, setTradesError ] = useState<string | null>( null );
-  const [ page, setPage ] = useState( 1 );
-  const [ hasMoreTrades, setHasMoreTrades ] = useState( true );
-  const previousOpenSymbolsRef = useRef<Set<string> | null>( null );
+  const [trades, setTrades] = useState<RecentTradeRow[] | null>(null);
+  const [tradesLoading, setTradesLoading] = useState(true);
+  const [tradesError, setTradesError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMoreTrades, setHasMoreTrades] = useState(true);
+  const previousOpenSymbolsRef = useRef<Set<string> | null>(null);
 
   const loadTrades = useCallback(
-    async ( pageNum: number, isInitial = false ) => {
-      if ( !session ) return;
-      setTradesLoading( true );
+    async (pageNum: number, isInitial = false) => {
+      if (!session) return;
+      setTradesLoading(true);
 
       try {
         const limit = 10;
-        const offset = ( pageNum - 1 ) * limit;
-        const { trades: page, hasMore } = await fetchRecentTrades( session, limit, offset );
+        const offset = (pageNum - 1) * limit;
+        const { trades: page, hasMore } = await fetchRecentTrades(
+          session,
+          limit,
+          offset
+        );
 
-        setTrades( ( prev ) => ( isInitial || !prev ? page : [ ...prev, ...page ] ) );
-        setHasMoreTrades( hasMore );
-        setTradesError( null );
-      } catch ( err ) {
+        setTrades((prev) => (isInitial || !prev ? page : [...prev, ...page]));
+        setHasMoreTrades(hasMore);
+        setTradesError(null);
+      } catch (err) {
         setTradesError(
-          err instanceof ApiError ? err.message : "Failed to load trade history."
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load trade history."
         );
       } finally {
-        setTradesLoading( false );
+        setTradesLoading(false);
       }
     },
-    [ session ]
+    [session]
   );
 
-  useEffect( () => {
-    if ( session ) {
-      setPage( 1 );
-      loadTrades( 1, true );
+  useEffect(() => {
+    if (session) {
+      setPage(1);
+      loadTrades(1, true);
     }
-  }, [ session, loadTrades ] );
+  }, [session, loadTrades]);
 
-  const handleLoadMore = useCallback( () => {
-    if ( tradesLoading || !hasMoreTrades ) return;
+  const handleLoadMore = useCallback(() => {
+    if (tradesLoading || !hasMoreTrades) return;
     const nextPage = page + 1;
-    setPage( nextPage );
-    loadTrades( nextPage, false );
-  }, [ tradesLoading, hasMoreTrades, page, loadTrades ] );
+    setPage(nextPage);
+    loadTrades(nextPage, false);
+  }, [tradesLoading, hasMoreTrades, page, loadTrades]);
 
-  const refetch = useCallback( () => {
-    if ( !session ) return;
-    if ( refreshSnapshot ) {
+  const refetch = useCallback(() => {
+    if (!session) return;
+    if (refreshSnapshot) {
       refreshSnapshot();
     }
-    setPage( 1 );
-    loadTrades( 1, true );
-  }, [ session, loadTrades, refreshSnapshot ] );
+    setPage(1);
+    loadTrades(1, true);
+  }, [session, loadTrades, refreshSnapshot]);
 
-  useEffect( () => {
-    handleBotEventRef.current = ( event ) => {
-      if ( event.type === "position.closed" || event.type === "snapshot.updated" ) {
+  useEffect(() => {
+    handleBotEventRef.current = (event: any) => {
+      // Include order/TP execution events, not just fully closed positions
+      if (
+        event.type === "position.closed" ||
+        event.type === "position.updated" ||
+        event.type === "order.filled" ||
+        event.type === "tp.hit" ||
+        event.type === "snapshot.updated"
+      ) {
         refetch();
       }
     };
-  }, [ refetch ] );
+  }, [refetch]);
 
-  useEffect( () => {
-    if ( !displaySnapshot ) return;
+  useEffect(() => {
+    if (!displaySnapshot) return;
 
-    const currentOpenSymbols = new Set(
-      displaySnapshot.positions.map( ( position ) => position.fullSymbol || position.symbol )
+    // Track symbol + size signature to capture scaling out at TP3
+    const currentPositionsSignature = new Map(
+      displaySnapshot.positions.map((p: any) => [
+        p.fullSymbol || p.symbol,
+        `${p.size}_${p.progress || ""}`,
+      ])
     );
-    const previousOpenSymbols = previousOpenSymbolsRef.current;
-    previousOpenSymbolsRef.current = currentOpenSymbols;
 
-    if ( !previousOpenSymbols ) return;
+    const previousSignatures = previousOpenSymbolsRef.current;
 
-    for ( const symbol of previousOpenSymbols ) {
-      if ( !currentOpenSymbols.has( symbol ) ) {
-        refetch();
+    // Update ref with new signature map converted to symbol keys for next run
+    previousOpenSymbolsRef.current = new Set(currentPositionsSignature.keys());
+
+    if (!previousSignatures) return;
+
+    // Refetch if position count, symbol list, or size changed
+    let needsRefetch = false;
+    for (const [symbol, sig] of currentPositionsSignature.entries()) {
+      if (!previousSignatures.has(symbol)) {
+        needsRefetch = true;
         break;
       }
     }
-  }, [ displaySnapshot, refetch ] );
 
-  useEffect( () => {
-    if ( !session ) return;
-    const id = setInterval( () => {
-      void loadTrades( 1, true );
-    }, 30_000 );
-    return () => clearInterval( id );
-  }, [ session, loadTrades ] );
+    if (needsRefetch) {
+      refetch();
+    }
+  }, [displaySnapshot, refetch]);
 
-  if ( !ready || !session ) {
+  useEffect(() => {
+    if (!session) return;
+    const id = setInterval(() => {
+      void loadTrades(1, true);
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [session, loadTrades]);
+
+  if (!ready || !session) {
     return (
-      <main className="min-h-screen flex flex-col bg-[var(--bg)]">
-        <div className="h-16 border-b border-[var(--hairline)] animate-pulse" />
-        <div className="flex-1 p-6 max-w-[1400px] mx-auto w-full space-y-6">
-          <div className="h-32 panel animate-pulse" />
-          <div className="h-64 panel animate-pulse" />
+      <main className='min-h-screen flex flex-col bg-[var(--bg)]'>
+        <div className='h-16 border-b border-[var(--hairline)] animate-pulse' />
+        <div className='flex-1 p-6 max-w-[1400px] mx-auto w-full space-y-6'>
+          <div className='h-32 panel animate-pulse' />
+          <div className='h-64 panel animate-pulse' />
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen flex flex-col">
+    <main className='min-h-screen flex flex-col'>
       <OperatorHeader
-        status={ ( connState !== "live" || snapshot?.health?.status === "unhealthy" ) ? (
-          <span className="text-xs font-mono text-[var(--short)] border border-[var(--short-dim)] px-2 py-0.5 rounded">
-            { snapshot?.health?.status === "unhealthy"
-              ? "EXCHANGE UNHEALTHY (DISPLAYING CACHED)"
-              : connState === "reconnecting"
+        status={
+          connState !== "live" || snapshot?.health?.status === "unhealthy" ? (
+            <span className='text-xs font-mono text-[var(--short)] border border-[var(--short-dim)] px-2 py-0.5 rounded'>
+              {snapshot?.health?.status === "unhealthy"
+                ? "EXCHANGE UNHEALTHY (DISPLAYING CACHED)"
+                : connState === "reconnecting"
                 ? "RECONNECTING (DISPLAYING CACHED)"
-                : "OFFLINE (DISPLAYING CACHED)" }
-          </span>
-        ) : null }
+                : "OFFLINE (DISPLAYING CACHED)"}
+            </span>
+          ) : null
+        }
       />
 
-      <StatusStrip snapshot={ displaySnapshot } connState={ connState } />
+      <StatusStrip snapshot={displaySnapshot} connState={connState} />
 
-      <div className="flex-1 p-6">
-        { !displaySnapshot ? (
-          <div className="h-[60vh] flex items-center justify-center">
-            <p className="font-mono text-sm text-[var(--muted)]">
+      <div className='flex-1 p-6'>
+        {!displaySnapshot ? (
+          <div className='h-[60vh] flex items-center justify-center'>
+            <p className='font-mono text-sm text-[var(--muted)]'>
               Waiting for data from the bot…
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 max-w-[1400px] mx-auto">
-            <div className="space-y-6 min-w-0">
-              <AccountSummary snapshot={ displaySnapshot } />
-              <PerformanceSummaryPanel session={ session } />
+          <div className='grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 max-w-[1400px] mx-auto'>
+            <div className='space-y-6 min-w-0'>
+              <AccountSummary snapshot={displaySnapshot} />
+              <PerformanceSummaryPanel session={session} />
               <FollowersSummaryPanel />
               <PositionsTable
-                positions={ displaySnapshot.positions }
-                session={ session }
-                onPositionClosed={ refetch }
+                positions={displaySnapshot.positions}
+                session={session}
+                onPositionClosed={refetch}
               />
               <TradeHistoryTable
-                session={ session }
-                trades={ trades }
-                loading={ tradesLoading }
-                error={ tradesError }
-                onLoadMore={ handleLoadMore }
-                hasMore={ hasMoreTrades }
-                onRepaired={ refetch }
+                session={session}
+                trades={trades}
+                loading={tradesLoading}
+                error={tradesError}
+                onLoadMore={handleLoadMore}
+                hasMore={hasMoreTrades}
+                onRepaired={refetch}
               />
-              <EquityChart data={ equityCurve } />
+              <EquityChart data={equityCurve} />
             </div>
 
-            <div className="space-y-6">
-              <KillSwitch session={ session } snapshot={ displaySnapshot } onAfterAction={ refetch } />
-              <RiskPanel risk={ displaySnapshot.risk } />
+            <div className='space-y-6'>
+              <KillSwitch
+                session={session}
+                snapshot={displaySnapshot}
+                onAfterAction={refetch}
+              />
+              <RiskPanel risk={displaySnapshot.risk} />
             </div>
           </div>
-        ) }
+        )}
       </div>
     </main>
   );
