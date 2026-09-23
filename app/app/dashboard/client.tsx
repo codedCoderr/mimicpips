@@ -97,6 +97,10 @@ function fmtPrice ( n: number | null | undefined ): string {
   return `$${ n.toLocaleString( "en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals } ) }`;
 }
 
+function fmtTradePrice ( n: number | null | undefined ): string {
+  return n && Number.isFinite( n ) && n > 0 ? fmtPrice( n ) : "—";
+}
+
 interface GateRowProps {
   label: string;
   met: boolean;
@@ -165,6 +169,7 @@ function GateRowSkeleton () {
 }
 
 function statusColor ( status: string ): string {
+  if ( status === "processing" ) return "var(--warn)";
   if ( status === "executed" || status === "closed" || status === "SUCCESS" ) return "var(--long)";
   if ( status === "failed" ) return "var(--short)";
   if ( status.startsWith( "skipped_" ) ) return "var(--warn)";
@@ -172,6 +177,7 @@ function statusColor ( status: string ): string {
 }
 
 function statusLabel ( status: string ): string {
+  if ( status === "processing" ) return "Processing";
   if ( status === "executed" ) return "Copied";
   if ( status === "closed" ) return "Closed";
   if ( status === "failed" ) return "Needs attention";
@@ -426,8 +432,8 @@ export function CopyTradingDashboardClient ( {
           id: entry.id,
           symbol: entry.symbol,
           side: entry.side,
-          entryPrice: entry.action === "OPEN" ? entry.entryPrice : 0,
-          exitPrice: entry.action === "CLOSE" ? entry.exitPrice : 0,
+          entryPrice: entry.entryPrice || 0,
+          exitPrice: entry.exitPrice || 0,
           stopLossPrice: entry.stopLossPrice ?? null,
           stopLossType: entry.stopLossType ?? null,
           atrPeriod: entry.atrPeriod ?? null,
@@ -451,7 +457,9 @@ export function CopyTradingDashboardClient ( {
         row.atrMultiplier = entry.atrMultiplier ?? row.atrMultiplier;
         row.marginAllocated = entry.marginAllocated || row.marginAllocated;
       } else if ( entry.action === "CLOSE" || ( entry.exitPrice ?? 0 ) > 0 ) {
+        row.entryPrice = entry.entryPrice || row.entryPrice;
         row.exitPrice = entry.exitPrice || row.exitPrice;
+        row.marginAllocated = entry.marginAllocated || row.marginAllocated;
         row.realizedPnl = entry.realizedPnl;
         row.roiPercentage = entry.roiPercentage;
         row.status = entry.status;
@@ -784,14 +792,14 @@ export function CopyTradingDashboardClient ( {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                          <div>In: { fmtPrice( e.entryPrice ) }</div>
+                          <div>In: { fmtTradePrice( e.entryPrice ) }</div>
                           <div>
                             Out:{ " " }
                             { ( e.exitPrice ?? 0 ) > 0
                               ? fmtPrice( e.exitPrice )
                               : e.isOpen
                                 ? "Active"
-                            : "Closed" }
+                                : "—" }
                           </div>
                         </td>
                         <td className="px-4 py-2.5 whitespace-nowrap">

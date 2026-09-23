@@ -45,6 +45,10 @@ function fmtPct(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
+function isMongoDuplicateKeyError(err: unknown): err is { code: 11000 } {
+  return typeof err === "object" && err !== null && "code" in err && err.code === 11000;
+}
+
 async function realizedPnlStats(db: Db, since: Date) {
   const result = await db.collection("copy_trade_log").aggregate<{
     totalPnl: number;
@@ -189,7 +193,20 @@ async function createAndMaybeSendSignal(db: Db, signal: MarketingSignalInput): P
     };
   }
 
-  const insert = await db.collection("marketing_events").insertOne(event);
+  let insert;
+  try {
+    insert = await db.collection("marketing_events").insertOne(event);
+  } catch (err: unknown) {
+    if (!isMongoDuplicateKeyError(err)) throw err;
+    const existing = await db.collection("marketing_events").findOne({ campaignKey: signal.campaignKey });
+    return {
+      campaignKey: signal.campaignKey,
+      type: signal.type,
+      title: signal.title,
+      outcome: "already_exists",
+      eventId: existing?._id?.toString(),
+    };
+  }
   const eventId = insert.insertedId.toString();
   const autoTelegram = process.env.AUTO_TELEGRAM_MARKETING === "true";
 

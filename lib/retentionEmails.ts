@@ -29,6 +29,10 @@ function dayKey(date = new Date()): string {
   return date.toISOString().slice(0, 10);
 }
 
+function isMongoDuplicateKeyError(err: unknown): err is { code: 11000 } {
+  return typeof err === "object" && err !== null && "code" in err && err.code === 11000;
+}
+
 function fmtNgn(n: number): string {
   return `NGN ${n.toLocaleString("en-NG", { maximumFractionDigits: 0 })}`;
 }
@@ -189,8 +193,7 @@ export async function runRetentionEmailCycle(options: { dryRun?: boolean } = {})
       campaignKey,
     };
 
-    const existing = await db.collection("marketing_send_logs").findOne({ campaignKey });
-    if (existing) {
+    if (await db.collection("marketing_send_logs").findOne({ campaignKey })) {
       results.push({ ...base, outcome: "skipped_already_sent" });
       continue;
     }
@@ -200,30 +203,47 @@ export async function runRetentionEmailCycle(options: { dryRun?: boolean } = {})
       continue;
     }
 
+    const now = new Date();
+    const claim = {
+      campaignKey,
+      userId: candidate.user._id,
+      channel: "email",
+      status: "processing",
+      subject: subjectFor(candidate.reason),
+      message: textEmail(candidate),
+      recipientEmail: candidate.user.email,
+      reason: candidate.reason,
+      healthScore: candidate.health.score,
+      healthBand: candidate.health.band,
+      createdAt: now,
+    };
+
+    let emailSent = false;
     try {
+      await db.collection("marketing_send_logs").insertOne(claim);
+
       await sendEmail({
         to: candidate.user.email,
         subject: subjectFor(candidate.reason),
         text: textEmail(candidate),
         html: htmlEmail(candidate),
       });
+      emailSent = true;
 
-      await db.collection("marketing_send_logs").insertOne({
-        campaignKey,
-        userId: candidate.user._id,
-        channel: "email",
-        status: "sent",
-        subject: subjectFor(candidate.reason),
-        message: textEmail(candidate),
-        recipientEmail: candidate.user.email,
-        reason: candidate.reason,
-        healthScore: candidate.health.score,
-        healthBand: candidate.health.band,
-        createdAt: new Date(),
-      });
+      await db.collection("marketing_send_logs").updateOne(
+        { campaignKey, status: "processing" },
+        { $set: { status: "sent", updatedAt: new Date() } }
+      );
 
       results.push({ ...base, outcome: "sent" });
     } catch (error) {
+      if (isMongoDuplicateKeyError(error)) {
+        results.push({ ...base, outcome: "skipped_already_sent" });
+        continue;
+      }
+      if (!emailSent) {
+        await db.collection("marketing_send_logs").deleteOne({ campaignKey, status: "processing" });
+      }
       results.push({ ...base, outcome: "error", detail: error instanceof Error ? error.message : "Email send failed." });
     }
   }

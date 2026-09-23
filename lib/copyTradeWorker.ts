@@ -13,6 +13,7 @@ import type {
 } from "./saasTypes";
 
 const MAX_CONCURRENT_EXECUTIONS = 8;
+const PROCESSING_CLAIM_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface LeaderTradeEvent {
   leaderTradeId: string;
@@ -210,18 +211,14 @@ async function executeForFollower(
   follower: EligibleFollower
 ): Promise<CopyTradeExecutionResult> {
   const userId = follower.user._id;
-  const duplicate = await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
-    userId,
-    leaderTradeId: event.leaderTradeId,
-    action: event.action,
-  });
-  if (duplicate) {
+  const claim = await claimCopyTradeLog(db, event, follower);
+  if (!claim.claimed) {
     return {
       userId: userId.toString(),
       status: "skipped_duplicate",
-      followerNotional: duplicate.followerNotional,
-      followerOrderId: duplicate.followerOrderId,
-      detail: "This leader trade was already processed for the follower.",
+      followerNotional: claim.existing?.followerNotional ?? null,
+      followerOrderId: claim.existing?.followerOrderId ?? null,
+      detail: claim.existing?.detail ?? "This leader trade was already processed for the follower.",
     };
   }
 
@@ -402,17 +399,14 @@ async function writeLog(
   const occurredAt = event.occurredAt ? new Date(event.occurredAt) : now;
   const executedAt = Number.isNaN(occurredAt.getTime()) ? now : occurredAt;
 
-  const updateResult = await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
+  await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
     {
       userId: follower.user._id,
       leaderTradeId: event.leaderTradeId,
       action: event.action,
     },
     {
-      $setOnInsert: {
-        userId: follower.user._id,
-        leaderTradeId: event.leaderTradeId,
-        action: event.action,
+      $set: {
         leaderSymbol: event.symbol,
         leaderSide: event.side,
         leaderNotional: event.leaderNotional,
@@ -431,26 +425,105 @@ async function writeLog(
         status: result.status,
         detail: result.detail,
         executedAt,
+      },
+      $setOnInsert: {
+        userId: follower.user._id,
+        leaderTradeId: event.leaderTradeId,
+        action: event.action,
         createdAt: now,
       },
     },
     { upsert: true }
   );
 
-  if (updateResult.upsertedCount === 0) {
-    return {
-      userId: follower.user._id.toString(),
-      status: "skipped_duplicate",
-      followerNotional: result.followerNotional,
-      followerOrderId: result.followerOrderId,
-      detail: "This leader trade was already processed for the follower.",
-    };
-  }
-
   return {
     userId: follower.user._id.toString(),
     ...result,
   };
+}
+
+async function claimCopyTradeLog(
+  db: Db,
+  event: LeaderTradeEvent,
+  follower: EligibleFollower
+): Promise<{ claimed: true } | { claimed: false; existing: CopyTradeLogDoc | null }> {
+  const now = new Date();
+  const occurredAt = event.occurredAt ? new Date(event.occurredAt) : now;
+  const executedAt = Number.isNaN(occurredAt.getTime()) ? now : occurredAt;
+
+  try {
+    await db.collection<CopyTradeLogDoc>("copy_trade_log").insertOne({
+      userId: follower.user._id,
+      leaderTradeId: event.leaderTradeId,
+      action: event.action,
+      leaderSymbol: event.symbol,
+      leaderSide: event.side,
+      leaderNotional: event.leaderNotional,
+      leaderBalance: event.leaderBalance,
+      followerNotional: null,
+      followerOrderId: null,
+      entryPrice: event.action === "OPEN" ? event.entryPrice ?? null : null,
+      exitPrice: event.action === "CLOSE" ? event.exitPrice ?? null : null,
+      stopLossPrice: event.stopLossPrice ?? null,
+      stopLossType: event.stopLossType ?? null,
+      atrPeriod: event.atrPeriod ?? null,
+      atrMultiplier: event.atrMultiplier ?? null,
+      realizedPnl: null,
+      roiPercentage: null,
+      exchange: follower.key.exchange,
+      status: "processing",
+      detail: "Processing copy-trade event.",
+      executedAt,
+      createdAt: now,
+    });
+    return { claimed: true };
+  } catch (error: unknown) {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : null;
+    if (code !== 11000) throw error;
+
+    const existing = await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
+      userId: follower.user._id,
+      leaderTradeId: event.leaderTradeId,
+      action: event.action,
+    });
+    if (
+      existing?._id &&
+      existing.status === "processing" &&
+      existing.createdAt.getTime() < now.getTime() - PROCESSING_CLAIM_TIMEOUT_MS
+    ) {
+      if (event.action === "OPEN") {
+        await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
+          { _id: existing._id, status: "processing", createdAt: existing.createdAt },
+          {
+            $set: {
+              status: "failed",
+              detail:
+                "Stale copy-trade open claim detected. Auto-retry is blocked to avoid accidentally opening a duplicate follower position.",
+              executedAt,
+            },
+          }
+        );
+        const failedExisting = await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
+          _id: existing._id,
+        });
+        return { claimed: false, existing: failedExisting ?? existing };
+      }
+
+      const reclaimed = await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
+        { _id: existing._id, status: "processing", createdAt: existing.createdAt },
+        {
+          $set: {
+            detail: "Reclaimed stale copy-trade processing claim.",
+            executedAt,
+          },
+        }
+      );
+      if (reclaimed.modifiedCount > 0) return { claimed: true };
+    }
+    return { claimed: false, existing };
+  }
 }
 
 function readString(value: unknown): string | null {

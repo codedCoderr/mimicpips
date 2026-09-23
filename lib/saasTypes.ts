@@ -84,6 +84,7 @@ export interface SubscriptionDoc {
   // full card details; this is Paystack's own reusable token.
   paystackCustomerCode: string | null;
   paystackAuthorizationCode: string | null;
+  paystackReference?: string | null;
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
   // The date the flat fee was last successfully charged — drives the
@@ -143,6 +144,7 @@ export interface PerformanceFeeInvoiceDoc {
 }
 
 export type CopyTradeLogStatus =
+  | "processing"
   | "executed"
   | "closed"
   | "skipped_insufficient_balance"

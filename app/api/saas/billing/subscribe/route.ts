@@ -26,20 +26,6 @@ export async function POST(req: NextRequest) {
 
   const db = await getSaasDb();
 
-  const existing = await db
-    .collection<SubscriptionDoc>("subscriptions")
-    .findOne({ userId: user._id! });
-
-  if (existing?.status === "ACTIVE") {
-    return NextResponse.json({ error: "Already subscribed." }, { status: 409 });
-  }
-  if (existing?.status === "PENDING_PAYMENT") {
-    return NextResponse.json(
-      { error: "A subscription checkout is already pending. Complete it or try again later." },
-      { status: 409 }
-    );
-  }
-
   const reference = `SUB-PAY-${user._id}-${randomUUID().slice(0, 8)}`;
   const now = new Date();
 
@@ -50,12 +36,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: getErrorMessage(err, "Could not calculate pricing.") }, { status: 500 });
   }
 
-  await db.collection<SubscriptionDoc>("subscriptions").updateOne(
-    { userId: user._id! },
+  const claimedSubscription = await db.collection<SubscriptionDoc>("subscriptions").findOneAndUpdate(
+    {
+      userId: user._id!,
+      status: { $nin: ["ACTIVE", "PENDING_PAYMENT", "RENEWING"] },
+    },
     {
       $set: {
         status: "PENDING_PAYMENT",
         monthlyFeeNGN,
+        paystackReference: reference,
         updatedAt: now,
       },
       $setOnInsert: {
@@ -69,8 +59,48 @@ export async function POST(req: NextRequest) {
         createdAt: now,
       },
     },
-    { upsert: true }
+    { returnDocument: "after" }
   );
+
+  let claimSucceeded = !!claimedSubscription;
+
+  if (!claimSucceeded) {
+    const insertDoc: SubscriptionDoc = {
+      userId: user._id!,
+      status: "PENDING_PAYMENT",
+      monthlyFeeNGN,
+      paystackReference: reference,
+      paystackCustomerCode: null,
+      paystackAuthorizationCode: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      lastChargedAt: null,
+      failedChargeCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await db.collection<SubscriptionDoc>("subscriptions").insertOne(insertDoc);
+      claimSucceeded = true;
+    } catch (err: unknown) {
+      const code = typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : null;
+      if (code !== 11000) throw err;
+    }
+  }
+
+  if (!claimSucceeded) {
+    const existing = await db
+      .collection<SubscriptionDoc>("subscriptions")
+      .findOne({ userId: user._id! });
+    const message =
+      existing?.status === "ACTIVE"
+        ? "Already subscribed."
+        : "A subscription checkout is already pending. Complete it or try again later.";
+    return NextResponse.json({ error: message }, { status: 409 });
+  }
 
   try {
     const checkout = await initializeSubscriptionCheckout({
@@ -86,6 +116,10 @@ export async function POST(req: NextRequest) {
       accessCode: checkout.accessCode,
     });
   } catch (err: unknown) {
+    await db.collection<SubscriptionDoc>("subscriptions").updateOne(
+      { userId: user._id!, status: "PENDING_PAYMENT", paystackReference: reference },
+      { $set: { status: "EXPIRED", paystackReference: null, updatedAt: new Date() } }
+    );
     return NextResponse.json(
       { error: getErrorMessage(err, "Could not start checkout.") },
       { status: 502 }

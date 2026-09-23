@@ -74,6 +74,32 @@ function calculateUnrealizedPnl(entry: CopyTradeLogResponseDoc, markPrice: numbe
   };
 }
 
+function calculateClosedPnlFromPrices(
+  entry: CopyTradeLogResponseDoc,
+  entryPrice: number,
+  exitPrice: number,
+  notional: number
+): { pnl: number; roi: number } | null {
+  if (
+    entry.action !== "CLOSE" ||
+    !Number.isFinite(entryPrice) ||
+    entryPrice <= 0 ||
+    !Number.isFinite(exitPrice) ||
+    exitPrice <= 0 ||
+    !Number.isFinite(notional) ||
+    notional <= 0
+  ) {
+    return null;
+  }
+
+  const direction = entry.leaderSide === "SHORT" || entry.side === "SHORT" ? -1 : 1;
+  const pnl = ((exitPrice - entryPrice) / entryPrice) * notional * direction;
+  return {
+    pnl,
+    roi: (pnl / notional) * 100,
+  };
+}
+
 function userFacingCopyTradeDetail(status: string, detail: string | null | undefined): string | null {
   if (!detail) return null;
   const lower = detail.toLowerCase();
@@ -130,6 +156,23 @@ export async function GET ( req: NextRequest ) {
       .limit( limit )
       .toArray();
 
+    const leaderTradeIds = Array.from(
+      new Set(entries.map((entry) => entry.leaderTradeId).filter(Boolean))
+    );
+    const openEntries = leaderTradeIds.length > 0
+      ? await db
+          .collection<CopyTradeLogResponseDoc>("copy_trade_log")
+          .find({
+            userId: user._id!,
+            action: "OPEN",
+            leaderTradeId: { $in: leaderTradeIds },
+          })
+          .toArray()
+      : [];
+    const openByLeaderTradeId = new Map(
+      openEntries.map((entry) => [entry.leaderTradeId, entry])
+    );
+
     const priceBySymbol = new Map<string, number | null>();
     await Promise.all(
       Array.from(new Set(entries.map((entry) => entry.leaderSymbol).filter(Boolean))).map(async (symbol) => {
@@ -140,23 +183,33 @@ export async function GET ( req: NextRequest ) {
     return NextResponse.json( {
       entries: entries.map( ( e ) => {
         const symbol = e.symbol || e.leaderSymbol || "UNKNOWN";
-        const { pnl, roi } = calculateUnrealizedPnl(e, priceBySymbol.get(symbol) ?? null);
+        const openEntry = e.leaderTradeId ? openByLeaderTradeId.get(e.leaderTradeId) : undefined;
+        const entryPrice = e.entryPrice ?? openEntry?.entryPrice ?? 0;
+        const exitPrice = e.exitPrice ?? 0;
+        const notional = e.marginAllocated ?? e.followerNotional ?? openEntry?.followerNotional ?? openEntry?.marginAllocated ?? 0;
+        const storedPnl = Number(e.realizedPnl ?? e.pnl ?? 0) || 0;
+        const storedRoi = Number(e.roiPercentage ?? e.roi ?? 0) || 0;
+        const priceBasedClose = calculateClosedPnlFromPrices(e, entryPrice, exitPrice, notional);
+        const shouldRepairClosePnl = e.action === "CLOSE" && priceBasedClose && Math.abs(storedPnl) < 0.000001;
+        const { pnl, roi } = shouldRepairClosePnl
+          ? priceBasedClose
+          : calculateUnrealizedPnl(e, priceBySymbol.get(symbol) ?? null);
         return {
           id: e._id!.toString(),
           leaderTradeId: e.leaderTradeId,
           action: e.action ?? "OPEN",
           symbol,
           side: e.side || e.leaderSide || "LONG",
-          entryPrice: e.entryPrice ?? 0,
-          exitPrice: e.exitPrice ?? 0,
-          stopLossPrice: e.stopLossPrice ?? null,
-          stopLossType: e.stopLossType ?? null,
-          atrPeriod: e.atrPeriod ?? null,
-          atrMultiplier: e.atrMultiplier ?? null,
-          marginAllocated: e.marginAllocated ?? e.followerNotional ?? 0,
-          followerNotional: e.followerNotional ?? e.marginAllocated ?? 0,
-          realizedPnl: pnl,
-          roiPercentage: roi,
+          entryPrice,
+          exitPrice,
+          stopLossPrice: e.stopLossPrice ?? openEntry?.stopLossPrice ?? null,
+          stopLossType: e.stopLossType ?? openEntry?.stopLossType ?? null,
+          atrPeriod: e.atrPeriod ?? openEntry?.atrPeriod ?? null,
+          atrMultiplier: e.atrMultiplier ?? openEntry?.atrMultiplier ?? null,
+          marginAllocated: notional,
+          followerNotional: notional,
+          realizedPnl: Number.isFinite(pnl) ? pnl : storedPnl,
+          roiPercentage: Number.isFinite(roi) ? roi : storedRoi,
           status: e.status || "SUCCESS",
           detail: userFacingCopyTradeDetail(e.status || "SUCCESS", e.detail),
           executedAt: e.executedAt

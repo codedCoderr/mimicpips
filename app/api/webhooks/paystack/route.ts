@@ -94,6 +94,8 @@ async function handleSubscriptionPayment ( db: Db, data: PaystackWebhookData | u
   await db.collection<SubscriptionDoc>( "subscriptions" ).updateOne(
     {
       userId: new ObjectId( userId ),
+      paystackReference: data?.reference,
+      status: "PENDING_PAYMENT",
       ...(amountNGN !== null ? { monthlyFeeNGN: amountNGN } : {}),
     },
     {
@@ -105,6 +107,7 @@ async function handleSubscriptionPayment ( db: Db, data: PaystackWebhookData | u
         currentPeriodEnd: periodEnd,
         lastChargedAt: now,
         failedChargeCount: 0,
+        paystackReference: null,
         updatedAt: now,
       },
     }
@@ -132,14 +135,10 @@ async function handlePerformanceFeePayment ( db: Db, data: PaystackWebhookData |
     return;
   }
 
-  // 2. Idempotency check — skip if already processed
-  if ( invoice.status === "PAID" ) {
-    return;
-  }
-
-  // 3. Mark invoice as PAID
-  await db.collection<PerformanceFeeInvoiceDoc>( "performance_fee_invoices" ).updateOne(
-    { _id: invoice._id },
+  // 2. Atomically mark invoice as PAID. If another duplicate webhook already
+  // won this transition, do not update high-water marks again.
+  const paidResult = await db.collection<PerformanceFeeInvoiceDoc>( "performance_fee_invoices" ).updateOne(
+    { _id: invoice._id, status: { $ne: "PAID" } },
     {
       $set: {
         status: "PAID",
@@ -149,7 +148,11 @@ async function handlePerformanceFeePayment ( db: Db, data: PaystackWebhookData |
     }
   );
 
-  // 4. Safely update the high-water mark now that payment is confirmed
+  if ( paidResult.modifiedCount === 0 ) {
+    return;
+  }
+
+  // 3. Safely update the high-water mark now that payment is confirmed
   await db.collection<HighWaterMarkDoc>( "high_water_marks" ).updateOne(
     { userId: invoice.userId },
     {

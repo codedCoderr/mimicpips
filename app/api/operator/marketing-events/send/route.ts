@@ -22,6 +22,10 @@ function textToHtml(text: string): string {
     .join("");
 }
 
+function isMongoDuplicateKeyError(err: unknown): err is { code: 11000 } {
+  return typeof err === "object" && err !== null && "code" in err && err.code === 11000;
+}
+
 export async function POST(req: NextRequest) {
   if (!(await requireOperator(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -58,37 +62,70 @@ export async function POST(req: NextRequest) {
   }
 
   const now = new Date();
-  let status: "sent" | "drafted" = "drafted";
+  let status: "sent" | "drafted" | "processing" = "drafted";
   let providerMessageId: number | null = null;
   let providerChatId: string | null = null;
+  const sendCampaignKey = ObjectId.isValid(eventId) ? `manual:${eventId}:${channel}` : null;
+  const claim = {
+    eventId: ObjectId.isValid(eventId) ? new ObjectId(eventId) : null,
+    userId: ObjectId.isValid(userId) ? new ObjectId(userId) : null,
+    channel,
+    status: "processing",
+    subject,
+    message,
+    recipientEmail: channel === "email" ? recipientEmail : null,
+    providerMessageId: null,
+    providerChatId: null,
+    campaignKey: sendCampaignKey,
+    createdAt: now,
+  };
 
-  if (channel === "email") {
-    await sendEmail({
-      to: recipientEmail,
-      subject,
-      text: `Hi ${recipientName},\n\n${message}\n\nMimic Pips`,
-      html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827"><p>Hi ${recipientName},</p>${textToHtml(message)}<p>Mimic Pips</p></div>`,
-    });
-    status = "sent";
+  if (sendCampaignKey) {
+    try {
+      await db.collection("marketing_send_logs").insertOne(claim);
+    } catch (err: unknown) {
+      if (!isMongoDuplicateKeyError(err)) throw err;
+      return NextResponse.json({
+        ok: true,
+        status: "already_sent",
+        detail: "This marketing event was already sent for this channel.",
+      });
+    }
   }
 
-  if (channel === "telegram_public") {
-    try {
+  try {
+    if (channel === "email") {
+      await sendEmail({
+        to: recipientEmail,
+        subject,
+        text: `Hi ${recipientName},\n\n${message}\n\nMimic Pips`,
+        html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827"><p>Hi ${recipientName},</p>${textToHtml(message)}<p>Mimic Pips</p></div>`,
+      });
+      status = "sent";
+    }
+
+    if (channel === "telegram_public") {
       const result = await sendTelegramPublicMessage(message);
       providerMessageId = result.messageId;
       providerChatId = result.chatId;
       status = "sent";
-    } catch (error) {
-      if (error instanceof TelegramSendError) {
-        return NextResponse.json({ error: error.message }, { status: error.statusCode });
-      }
-      throw error;
     }
+  } catch (error) {
+    if (sendCampaignKey) {
+      await db.collection("marketing_send_logs").deleteOne({
+        campaignKey: sendCampaignKey,
+        status: "processing",
+      });
+    }
+    if (error instanceof TelegramSendError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    throw error;
   }
 
   const log = {
-    eventId: ObjectId.isValid(eventId) ? new ObjectId(eventId) : null,
-    userId: ObjectId.isValid(userId) ? new ObjectId(userId) : null,
+    eventId: claim.eventId,
+    userId: claim.userId,
     channel,
     status,
     subject,
@@ -96,10 +133,18 @@ export async function POST(req: NextRequest) {
     recipientEmail: channel === "email" ? recipientEmail : null,
     providerMessageId,
     providerChatId,
+    campaignKey: sendCampaignKey,
     createdAt: now,
   };
 
-  await db.collection("marketing_send_logs").insertOne(log);
+  if (sendCampaignKey) {
+    await db.collection("marketing_send_logs").updateOne(
+      { campaignKey: sendCampaignKey },
+      { $set: { ...log, updatedAt: now } }
+    );
+  } else {
+    await db.collection("marketing_send_logs").insertOne(log);
+  }
   if (ObjectId.isValid(eventId)) {
     await db.collection("marketing_events").updateOne(
       { _id: new ObjectId(eventId) },
