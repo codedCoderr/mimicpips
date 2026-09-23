@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromSessionToken, COOKIE_NAME } from "@/lib/saasAuth";
-import { getSaasDb } from "@/lib/saasDb";
+import { getBotDb, getSaasDb } from "@/lib/saasDb";
 import { getErrorMessage } from "@/lib/errorMessage";
 import type { CopyTradeLogDoc, CopyTradeLogStatus } from "@/lib/saasTypes";
+import { ObjectId, type Document } from "mongodb";
 
 type CopyTradeLogResponseDoc = CopyTradeLogDoc & {
   symbol?: string;
@@ -21,6 +22,8 @@ type CopyTradeLogResponseDoc = CopyTradeLogDoc & {
   status?: CopyTradeLogStatus | "SUCCESS";
   executedAt?: Date;
 };
+
+const BOT_TRADES_COLLECTION = "futures_history";
 
 function toBinanceSymbol(symbol: string): string {
   return symbol.replace(":USDT", "").replace("/", "");
@@ -100,6 +103,31 @@ function calculateClosedPnlFromPrices(
   };
 }
 
+function readPositiveNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return null;
+}
+
+function leaderHistoryPrices(doc: Document | undefined): {
+  entryPrice: number | null;
+  exitPrice: number | null;
+} {
+  if (!doc) {
+    return {
+      entryPrice: null,
+      exitPrice: null,
+    };
+  }
+
+  return {
+    entryPrice: readPositiveNumber(doc.entryPrice, doc.avgEntryPrice),
+    exitPrice: readPositiveNumber(doc.exitPrice, doc.stopLossHitPrice, doc.stopLoss, doc.avgExitPrice),
+  };
+}
+
 function userFacingCopyTradeDetail(status: string, detail: string | null | undefined): string | null {
   if (!detail) return null;
   const lower = detail.toLowerCase();
@@ -126,6 +154,14 @@ function userFacingCopyTradeDetail(status: string, detail: string | null | undef
     return detail.replace(/^skipped[_\s-]*/i, "");
   }
   return detail.length > 140 ? `${detail.slice(0, 137)}...` : detail;
+}
+
+function isAlreadyClosedDetail(detail: string | null | undefined): boolean {
+  if (!detail) return false;
+  const lower = detail.toLowerCase();
+  return lower.includes("already flat") ||
+    lower.includes("already closed") ||
+    lower.includes("no matching follower position is open");
 }
 
 export async function GET ( req: NextRequest ) {
@@ -172,6 +208,28 @@ export async function GET ( req: NextRequest ) {
     const openByLeaderTradeId = new Map(
       openEntries.map((entry) => [entry.leaderTradeId, entry])
     );
+    const objectLeaderTradeIds = leaderTradeIds.filter((id): id is string => (
+      typeof id === "string" && ObjectId.isValid(id)
+    )).map((id) => new ObjectId(id));
+    const leaderHistoryDocs = leaderTradeIds.length > 0
+      ? await (await getBotDb())
+          .collection<Document>(BOT_TRADES_COLLECTION)
+          .find({
+            $or: [
+              { tradeId: { $in: leaderTradeIds } },
+              { leaderTradeId: { $in: leaderTradeIds } },
+              { id: { $in: leaderTradeIds } },
+              ...(objectLeaderTradeIds.length > 0 ? [{ _id: { $in: objectLeaderTradeIds } }] : []),
+            ],
+          })
+          .toArray()
+      : [];
+    const leaderHistoryByTradeId = new Map<string, Document>();
+    for (const doc of leaderHistoryDocs) {
+      for (const key of [doc._id?.toString(), doc.tradeId, doc.leaderTradeId, doc.id]) {
+        if (typeof key === "string" && key) leaderHistoryByTradeId.set(key, doc);
+      }
+    }
 
     const priceBySymbol = new Map<string, number | null>();
     await Promise.all(
@@ -184,8 +242,15 @@ export async function GET ( req: NextRequest ) {
       entries: entries.map( ( e ) => {
         const symbol = e.symbol || e.leaderSymbol || "UNKNOWN";
         const openEntry = e.leaderTradeId ? openByLeaderTradeId.get(e.leaderTradeId) : undefined;
-        const entryPrice = e.entryPrice ?? openEntry?.entryPrice ?? 0;
-        const exitPrice = e.exitPrice ?? 0;
+        const leaderPrices = leaderHistoryPrices(
+          e.leaderTradeId ? leaderHistoryByTradeId.get(e.leaderTradeId) : undefined
+        );
+        const entryPrice = e.entryPrice ?? openEntry?.entryPrice ?? leaderPrices.entryPrice ?? 0;
+        const stopLossPrice = e.stopLossPrice ?? openEntry?.stopLossPrice ?? null;
+        const recordedExitPrice = e.exitPrice ?? 0;
+        const exitPrice = e.action === "CLOSE" && (!recordedExitPrice || recordedExitPrice <= 0)
+          ? leaderPrices.exitPrice ?? stopLossPrice ?? 0
+          : recordedExitPrice;
         const notional = e.marginAllocated ?? e.followerNotional ?? openEntry?.followerNotional ?? openEntry?.marginAllocated ?? 0;
         const storedPnl = Number(e.realizedPnl ?? e.pnl ?? 0) || 0;
         const storedRoi = Number(e.roiPercentage ?? e.roi ?? 0) || 0;
@@ -194,6 +259,13 @@ export async function GET ( req: NextRequest ) {
         const { pnl, roi } = shouldRepairClosePnl
           ? priceBasedClose
           : calculateUnrealizedPnl(e, priceBySymbol.get(symbol) ?? null);
+        const closeResolvedFromPrices = e.action === "CLOSE" && !!priceBasedClose;
+        const effectiveStatus = closeResolvedFromPrices && e.status === "failed"
+          ? "closed"
+          : e.status || "SUCCESS";
+        const effectiveDetail = closeResolvedFromPrices && (e.status === "failed" || isAlreadyClosedDetail(e.detail))
+          ? null
+          : userFacingCopyTradeDetail(e.status || "SUCCESS", e.detail);
         return {
           id: e._id!.toString(),
           leaderTradeId: e.leaderTradeId,
@@ -202,7 +274,7 @@ export async function GET ( req: NextRequest ) {
           side: e.side || e.leaderSide || "LONG",
           entryPrice,
           exitPrice,
-          stopLossPrice: e.stopLossPrice ?? openEntry?.stopLossPrice ?? null,
+          stopLossPrice,
           stopLossType: e.stopLossType ?? openEntry?.stopLossType ?? null,
           atrPeriod: e.atrPeriod ?? openEntry?.atrPeriod ?? null,
           atrMultiplier: e.atrMultiplier ?? openEntry?.atrMultiplier ?? null,
@@ -210,8 +282,8 @@ export async function GET ( req: NextRequest ) {
           followerNotional: notional,
           realizedPnl: Number.isFinite(pnl) ? pnl : storedPnl,
           roiPercentage: Number.isFinite(roi) ? roi : storedRoi,
-          status: e.status || "SUCCESS",
-          detail: userFacingCopyTradeDetail(e.status || "SUCCESS", e.detail),
+          status: effectiveStatus,
+          detail: effectiveDetail,
           executedAt: e.executedAt
             ? new Date( e.executedAt ).toISOString()
             : e.createdAt
