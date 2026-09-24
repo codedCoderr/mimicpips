@@ -50,6 +50,7 @@ interface UnifiedTrade {
   symbol: string;
   side: "LONG" | "SHORT";
   entryPrice: number;
+  markPrice: number | null;
   exitPrice: number;
   stopLossPrice: number | null;
   stopLossType: "ATR" | "manual" | "unknown" | null;
@@ -71,6 +72,7 @@ interface CopyTradeLogEntry {
   symbol: string;
   side: "LONG" | "SHORT";
   entryPrice: number;
+  markPrice?: number | null;
   exitPrice: number;
   stopLossPrice?: number | null;
   stopLossType?: "ATR" | "manual" | "unknown" | null;
@@ -202,7 +204,9 @@ function stopDistancePct ( trade: UnifiedTrade ): number | null {
   if ( !trade.isOpen || !entryPrice || !stopLossPrice || !Number.isFinite( roi ) ) return null;
 
   const direction = trade.side === "SHORT" ? -1 : 1;
-  const markPrice = entryPrice * ( 1 + ( roi / 100 ) * direction );
+  const markPrice = trade.markPrice && trade.markPrice > 0
+    ? trade.markPrice
+    : entryPrice * ( 1 + ( roi / 100 ) * direction );
   if ( markPrice <= 0 ) return null;
 
   const distance = trade.side === "SHORT"
@@ -433,6 +437,7 @@ export function CopyTradingDashboardClient ( {
           symbol: entry.symbol,
           side: entry.side,
           entryPrice: entry.entryPrice || 0,
+          markPrice: entry.markPrice ?? null,
           exitPrice: entry.exitPrice || 0,
           stopLossPrice: entry.stopLossPrice ?? null,
           stopLossType: entry.stopLossType ?? null,
@@ -451,6 +456,7 @@ export function CopyTradingDashboardClient ( {
       const row = map.get( tradeKey )!;
       if ( entry.action === "OPEN" ) {
         row.entryPrice = entry.entryPrice || row.entryPrice;
+        row.markPrice = entry.markPrice ?? row.markPrice;
         row.stopLossPrice = entry.stopLossPrice ?? row.stopLossPrice;
         row.stopLossType = entry.stopLossType ?? row.stopLossType;
         row.atrPeriod = entry.atrPeriod ?? row.atrPeriod;
@@ -458,6 +464,7 @@ export function CopyTradingDashboardClient ( {
         row.marginAllocated = entry.marginAllocated || row.marginAllocated;
       } else if ( entry.action === "CLOSE" || ( entry.exitPrice ?? 0 ) > 0 ) {
         row.entryPrice = entry.entryPrice || row.entryPrice;
+        row.markPrice = entry.markPrice ?? row.markPrice;
         row.exitPrice = entry.exitPrice || row.exitPrice;
         row.marginAllocated = entry.marginAllocated || row.marginAllocated;
         row.realizedPnl = entry.realizedPnl;
@@ -793,6 +800,9 @@ export function CopyTradingDashboardClient ( {
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
                           <div>In: { fmtTradePrice( e.entryPrice ) }</div>
+                          { e.isOpen && e.markPrice ? (
+                            <div>Mark: { fmtTradePrice( e.markPrice ) }</div>
+                          ) : null }
                           <div>
                             Out:{ " " }
                             { ( e.exitPrice ?? 0 ) > 0

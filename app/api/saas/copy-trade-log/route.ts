@@ -9,6 +9,7 @@ type CopyTradeLogResponseDoc = CopyTradeLogDoc & {
   symbol?: string;
   side?: "LONG" | "SHORT";
   entryPrice?: number;
+  markPrice?: number | null;
   exitPrice?: number;
   stopLossPrice?: number | null;
   stopLossType?: "ATR" | "manual" | "unknown" | null;
@@ -241,6 +242,9 @@ export async function GET ( req: NextRequest ) {
     return NextResponse.json( {
       entries: entries.map( ( e ) => {
         const symbol = e.symbol || e.leaderSymbol || "UNKNOWN";
+        const markPrice = e.action === "OPEN"
+          ? priceBySymbol.get(e.leaderSymbol) ?? priceBySymbol.get(symbol) ?? null
+          : null;
         const openEntry = e.leaderTradeId ? openByLeaderTradeId.get(e.leaderTradeId) : undefined;
         const leaderPrices = leaderHistoryPrices(
           e.leaderTradeId ? leaderHistoryByTradeId.get(e.leaderTradeId) : undefined
@@ -258,7 +262,7 @@ export async function GET ( req: NextRequest ) {
         const shouldRepairClosePnl = e.action === "CLOSE" && priceBasedClose && Math.abs(storedPnl) < 0.000001;
         const { pnl, roi } = shouldRepairClosePnl
           ? priceBasedClose
-          : calculateUnrealizedPnl(e, priceBySymbol.get(symbol) ?? null);
+          : calculateUnrealizedPnl(e, markPrice);
         const closeResolvedFromPrices = e.action === "CLOSE" && !!priceBasedClose;
         const effectiveStatus = closeResolvedFromPrices && e.status === "failed"
           ? "closed"
@@ -273,6 +277,7 @@ export async function GET ( req: NextRequest ) {
           symbol,
           side: e.side || e.leaderSide || "LONG",
           entryPrice,
+          markPrice,
           exitPrice,
           stopLossPrice,
           stopLossType: e.stopLossType ?? openEntry?.stopLossType ?? null,
