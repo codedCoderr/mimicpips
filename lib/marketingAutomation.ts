@@ -49,6 +49,20 @@ function isMongoDuplicateKeyError(err: unknown): err is { code: 11000 } {
   return typeof err === "object" && err !== null && "code" in err && err.code === 11000;
 }
 
+function resolvedCloseFailureFilter() {
+  return {
+    $and: [
+      { action: "CLOSE" },
+      { status: "failed" },
+      {
+        detail: {
+          $regex: /(already flat|already closed|no matching follower position is open)/i,
+        },
+      },
+    ],
+  };
+}
+
 async function realizedPnlStats(db: Db, since: Date) {
   const result = await db.collection("copy_trade_log").aggregate<{
     totalPnl: number;
@@ -59,6 +73,7 @@ async function realizedPnlStats(db: Db, since: Date) {
     {
       $match: {
         createdAt: { $gte: since },
+        status: { $in: ["closed", "executed"] },
         $or: [
           { action: "CLOSE" },
           { realizedPnl: { $ne: null } },
@@ -89,11 +104,25 @@ async function recentGateStats(db: Db, since: Date) {
   const [riskActions, failures, activeFollowers] = await Promise.all([
     db.collection("follower_behaviour_events").countDocuments({
       createdAt: { $gte: since },
-      type: { $in: ["copy_trading_disabled", "risk_settings_view", "support_intent"] },
+      $or: [
+        {
+          type: "copy_trading_disabled",
+          "metadata.source": { $ne: "system_gate" },
+        },
+        { type: { $in: ["risk_settings_view", "support_intent"] } },
+      ],
     }),
     db.collection("copy_trade_log").countDocuments({
       createdAt: { $gte: since },
-      status: { $regex: /^(failed|skipped_)/ },
+      $and: [
+        {
+          $or: [
+            { status: "failed" },
+            { action: "OPEN", status: { $regex: /^skipped_/ } },
+          ],
+        },
+        { $nor: [resolvedCloseFailureFilter()] },
+      ],
     }),
     db.collection("users").countDocuments({ role: "follower", copyTradingEnabled: true }),
   ]);

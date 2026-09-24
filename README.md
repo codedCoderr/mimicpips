@@ -83,9 +83,11 @@ Content-Type: application/json
 ```
 
 The body may be either the trade payload directly or a broker envelope
-with `payload`/`data`. Required trade fields are `leaderTradeId`,
-`action` (`OPEN` or `CLOSE`), `symbol`, `side` (`LONG` or `SHORT`),
-`leaderNotional`, and `leaderBalance`.
+with `payload`/`data`. Required trade fields for every event are
+`leaderTradeId`, `action` (`OPEN` or `CLOSE`), `symbol`, and `side`
+(`LONG` or `SHORT`). `OPEN` events also require `leaderNotional` and
+`leaderBalance`; `CLOSE` events can be accepted with just the stable trade
+identity plus close/exit prices.
 
 For follower trust/risk visibility, open-trade payloads should also include
 the active stop-loss state. The SaaS parser accepts any of these stop price
@@ -191,3 +193,29 @@ curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/marketing-automation" \
 ```
 
 Use a 30-minute EventBridge schedule for marketing scans. The scanner uses campaign keys, so repeated runs should not duplicate the same condition for the same day.
+
+### Billing cron
+
+Amplify/serverless deployments should trigger billing by HTTP scheduler instead
+of relying on the long-running worker process. This runs subscription renewals,
+performance-fee invoicing, then copy-trading gate enforcement and auto-restore.
+
+```bash
+curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/billing" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Use a monthly schedule, for example the first day of each month. The operator
+dashboard "run now" action uses the same underlying cycle.
+
+### Copy-trading gate sync
+
+Copy-trading gates should also be synced by scheduler in production, especially on Amplify where a long-running worker is not guaranteed. This disables copy trading for followers who are no longer eligible, and re-enables followers who have become fully eligible again.
+
+```bash
+curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/gate-sync" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Use a short schedule such as every 5 minutes. This does not open or close trades; it only updates follower copy-trading eligibility gates.
+Auto-enable only reverses pauses created by system gates. If a follower or operator manually turns copy trading off, gate sync will not silently turn it back on.

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
-import { runPerformanceFeeBillingCycle, runSubscriptionRenewalCycle } from "@/lib/billingJobs";
+import { runBillingAndGateCycle } from "@/lib/cron/billingCron";
 
 /**
  * Operator-triggered version of /api/cron/run-billing — same underlying
@@ -16,14 +16,10 @@ export async function POST ( req: NextRequest ) {
     return NextResponse.json( { error: "Unauthorized" }, { status: 401 } );
   }
 
-  const [ performanceFeeResults, renewalResults ] = await Promise.all( [
-    runPerformanceFeeBillingCycle(),
-    runSubscriptionRenewalCycle(),
-  ] );
+  const results = await runBillingAndGateCycle();
 
   return NextResponse.json( {
     ok: true,
-    performanceFees: performanceFeeResults,
-    renewals: renewalResults,
+    ...results,
   } );
 }

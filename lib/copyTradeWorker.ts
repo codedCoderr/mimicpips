@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import { ObjectId, type Db, type Filter } from "mongodb";
 import { getSaasDb } from "./saasDb";
 import { calculateFollowerNotional, getCopyTradePauseBalanceUSDT } from "./copyTradeSizing";
 import { decryptSecret } from "./exchangeKeyCrypto";
@@ -53,7 +53,17 @@ export interface CopyTradeExecutionResult {
 interface EligibleFollower {
   user: UserDoc & { _id: ObjectId };
   key: ExchangeKeyDoc;
-  subscription: SubscriptionDoc;
+  subscription?: SubscriptionDoc;
+}
+
+interface CopyTradingBehaviourEventDoc {
+  userId: ObjectId;
+  type: "copy_trading_enabled" | "copy_trading_disabled";
+  metadata?: {
+    source?: string;
+    reason?: string;
+  };
+  createdAt: Date;
 }
 
 interface BotCopyTradeResponse {
@@ -105,14 +115,21 @@ export function parseLeaderTradeEvent(input: unknown): LeaderTradeEvent | null {
   const body = unwrapped as Record<string, unknown>;
 
   const leaderTradeId = readString(body.leaderTradeId) ?? readString(body.tradeId) ?? readString(body.id);
-  const rawAction = readString(body.action)?.toUpperCase() ?? (readString(body.type) === "position.closed" ? "CLOSE" : "OPEN");
+  const eventType = readString(body.type)?.toLowerCase();
+  const rawAction = readString(body.action)?.toUpperCase() ?? (eventType === "position.closed" ? "CLOSE" : "OPEN");
   const action = rawAction === "CLOSE" ? "CLOSE" : rawAction === "OPEN" ? "OPEN" : null;
   const symbol = readString(body.symbol) ?? readString(body.leaderSymbol);
   const side = readSide(body.side) ?? readSide(body.leaderSide);
   const leaderNotional = readNumber(body.leaderNotional) ?? readNumber(body.notional) ?? readNumber(body.marginUsed);
   const leaderBalance = readNumber(body.leaderBalance) ?? readNumber(body.totalBalance) ?? readNumber(body.accountBalance);
 
-  if (!leaderTradeId || !action || !symbol || !side || !leaderNotional || !leaderBalance) {
+  if (
+    !leaderTradeId ||
+    !action ||
+    !symbol ||
+    !side ||
+    (action === "OPEN" && (!leaderNotional || !leaderBalance))
+  ) {
     return null;
   }
 
@@ -121,10 +138,15 @@ export function parseLeaderTradeEvent(input: unknown): LeaderTradeEvent | null {
     action,
     symbol,
     side,
-    leaderNotional,
-    leaderBalance,
+    leaderNotional: leaderNotional ?? 0,
+    leaderBalance: leaderBalance ?? 0,
     entryPrice: readNumber(body.entryPrice) ?? readNumber(body.avgEntryPrice) ?? null,
-    exitPrice: readNumber(body.exitPrice) ?? null,
+    exitPrice:
+      readNumber(body.exitPrice) ??
+      readNumber(body.avgExitPrice) ??
+      readNumber(body.stopLossHitPrice) ??
+      readNumber(body.closePrice) ??
+      null,
     stopLossPrice:
       readNumber(body.stopLossPrice) ??
       readNumber(body.stopLoss) ??
@@ -148,7 +170,7 @@ export function parseLeaderTradeEvent(input: unknown): LeaderTradeEvent | null {
 
 export async function executeCopyTradeFanOut(event: LeaderTradeEvent): Promise<CopyTradeExecutionResult[]> {
   const db = await getSaasDb();
-  const followers = await loadEligibleFollowers(db);
+  const followers = await loadEligibleFollowers(db, event);
   console.log(
     `[CopyTrade] ${event.action} ${event.symbol}: ${followers.length} eligible follower(s) found.`
   );
@@ -163,14 +185,32 @@ export async function executeCopyTradeFanOut(event: LeaderTradeEvent): Promise<C
   return results;
 }
 
-async function loadEligibleFollowers(db: Db): Promise<EligibleFollower[]> {
+async function loadEligibleFollowers(db: Db, event: LeaderTradeEvent): Promise<EligibleFollower[]> {
+  const openCopyUserIds = event.action === "CLOSE"
+    ? await db
+        .collection<CopyTradeLogDoc>("copy_trade_log")
+        .distinct("userId", {
+          leaderTradeId: event.leaderTradeId,
+          action: "OPEN",
+          status: { $in: ["executed", "processing"] },
+        })
+    : [];
+  const openCopyObjectIds = openCopyUserIds.filter((userId): userId is ObjectId => userId instanceof ObjectId);
+  const userFilter: Filter<UserDoc> = event.action === "CLOSE"
+    ? {
+        role: "follower",
+        emailVerified: true,
+        _id: { $in: openCopyObjectIds },
+      }
+    : {
+        role: "follower",
+        copyTradingEnabled: true,
+        emailVerified: true,
+      };
+
   const users = await db
     .collection<UserDoc>("users")
-    .find({
-      role: "follower",
-      copyTradingEnabled: true,
-      emailVerified: true,
-    })
+    .find(userFilter)
     .toArray();
 
   const userIds = users.flatMap((user) => (user._id ? [user._id] : []));
@@ -200,7 +240,8 @@ async function loadEligibleFollowers(db: Db): Promise<EligibleFollower[]> {
     const userId = user._id.toString();
     const key = keyByUser.get(userId);
     const subscription = subscriptionByUser.get(userId);
-    if (!key || !subscription || pendingInvoiceUsers.has(userId)) return [];
+    if (!key) return [];
+    if (event.action === "OPEN" && (!subscription || pendingInvoiceUsers.has(userId))) return [];
     return [{ user: user as UserDoc & { _id: ObjectId }, key, subscription }];
   });
 }
@@ -222,8 +263,15 @@ async function executeForFollower(
     };
   }
 
+  const openLog = event.action === "CLOSE"
+    ? await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
+        userId,
+        leaderTradeId: event.leaderTradeId,
+        action: "OPEN",
+      })
+    : null;
   const followerBalance = follower.key.lastKnownBalanceUSDT;
-  if (!followerBalance || followerBalance <= 0) {
+  if (event.action === "OPEN" && (!followerBalance || followerBalance <= 0)) {
     return writeLog(db, event, follower, {
       status: "skipped_balance_unavailable",
       followerNotional: null,
@@ -232,11 +280,20 @@ async function executeForFollower(
     });
   }
   const pauseBalanceUSDT = getCopyTradePauseBalanceUSDT();
-  if (event.action === "OPEN" && followerBalance < pauseBalanceUSDT) {
-    await db.collection<UserDoc>("users").updateOne(
-      { _id: userId },
-      { $set: { copyTradingEnabled: false, updatedAt: new Date() } }
-    );
+  if (event.action === "OPEN" && followerBalance! < pauseBalanceUSDT) {
+    const now = new Date();
+    await Promise.all([
+      db.collection<UserDoc>("users").updateOne(
+        { _id: userId },
+        { $set: { copyTradingEnabled: false, updatedAt: now } }
+      ),
+      db.collection<CopyTradingBehaviourEventDoc>("follower_behaviour_events").insertOne({
+        userId,
+        type: "copy_trading_disabled",
+        metadata: { source: "system_gate", reason: "below_pause_balance" },
+        createdAt: now,
+      }),
+    ]);
     return writeLog(db, event, follower, {
       status: "skipped_insufficient_balance",
       followerNotional: null,
@@ -245,13 +302,25 @@ async function executeForFollower(
     });
   }
 
-  const sizing = calculateFollowerNotional({
-    leaderNotional: event.leaderNotional,
-    leaderBalance: event.leaderBalance,
-    followerBalance,
-  });
+  const sizing = event.action === "CLOSE" && openLog?.followerNotional
+    ? {
+        followerNotional: openLog.followerNotional,
+        scaleFactor: 0,
+        cappedByMaxPct: false,
+        belowMinimum: false,
+        minNotionalUSDT: 0,
+      }
+    : calculateFollowerNotional({
+        leaderNotional: event.leaderNotional,
+        leaderBalance: event.leaderBalance,
+        followerBalance: followerBalance ?? 0,
+      });
+  const executionNotional =
+    event.action === "CLOSE" && (!Number.isFinite(sizing.followerNotional) || sizing.followerNotional <= 0)
+      ? 1
+      : sizing.followerNotional;
 
-  if (sizing.belowMinimum || sizing.followerNotional <= 0) {
+  if (event.action === "OPEN" && (sizing.belowMinimum || sizing.followerNotional <= 0)) {
     return writeLog(db, event, follower, {
       status: "skipped_insufficient_balance",
       followerNotional: sizing.followerNotional,
@@ -268,23 +337,29 @@ async function executeForFollower(
     const execution = await callBotCopyTradeExecution(event, {
       apiKey,
       apiSecret,
-      followerNotional: sizing.followerNotional,
+      followerNotional: executionNotional,
     });
     const reason = execution.reason ?? execution.error ?? "";
     if (!execution.ok && event.action === "CLOSE" && /no matching follower position is open/i.test(reason)) {
-      const openLog = await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
-        userId,
-        leaderTradeId: event.leaderTradeId,
-        action: "OPEN",
-      });
+      const exitPrice = event.exitPrice ?? null;
+      const entryPrice = openLog?.entryPrice ?? null;
+      const realizedPnl =
+        entryPrice && exitPrice && sizing.followerNotional
+          ? ((exitPrice - entryPrice) / entryPrice) * sizing.followerNotional * (event.side === "SHORT" ? -1 : 1)
+          : null;
+      const roiPercentage =
+        realizedPnl !== null && sizing.followerNotional
+          ? (realizedPnl / sizing.followerNotional) * 100
+          : null;
+
       return writeLog(db, event, follower, {
         status: "closed",
         followerNotional: sizing.followerNotional,
         followerOrderId: openLog?.followerOrderId ?? null,
-        entryPrice: openLog?.entryPrice ?? null,
-        exitPrice: null,
-        realizedPnl: 0,
-        roiPercentage: 0,
+        entryPrice,
+        exitPrice,
+        realizedPnl,
+        roiPercentage,
         detail: "Follower was already flat when the leader close event arrived.",
       });
     }
@@ -298,13 +373,6 @@ async function executeForFollower(
       });
     }
 
-    const openLog = event.action === "CLOSE"
-      ? await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
-          userId,
-          leaderTradeId: event.leaderTradeId,
-          action: "OPEN",
-        })
-      : null;
     const entryPrice = event.action === "OPEN" ? execution.avgFillPrice ?? null : openLog?.entryPrice ?? null;
     const exitPrice = event.action === "CLOSE" ? execution.avgFillPrice ?? event.exitPrice ?? null : null;
     const priceBasedPnl =
@@ -488,6 +556,21 @@ async function claimCopyTradeLog(
       leaderTradeId: event.leaderTradeId,
       action: event.action,
     });
+
+    if (event.action === "CLOSE" && existing?._id && existing.status === "failed") {
+      const reclaimed = await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
+        { _id: existing._id, status: "failed" },
+        {
+          $set: {
+            status: "processing",
+            detail: "Retrying failed copy-trade close event.",
+            executedAt,
+          },
+        }
+      );
+      if (reclaimed.modifiedCount > 0) return { claimed: true };
+    }
+
     if (
       existing?._id &&
       existing.status === "processing" &&

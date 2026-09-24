@@ -73,6 +73,31 @@ function actionForBand(band: FollowerHealthBand, drivers: string[]): string {
   return "Check in with a concise confidence-building update.";
 }
 
+function isAlreadyClosedCopyTradeDetail(detail: string | null | undefined): boolean {
+  if (!detail) return false;
+  const lower = detail.toLowerCase();
+  return lower.includes("already flat") ||
+    lower.includes("already closed") ||
+    lower.includes("no matching follower position is open");
+}
+
+function isUnresolvedCopyTradeIssue(trade: CopyTradeLogDoc): boolean {
+  if (trade.status === "failed") {
+    return !(trade.action === "CLOSE" && isAlreadyClosedCopyTradeDetail(trade.detail));
+  }
+  if (trade.status.startsWith("skipped_")) {
+    return trade.action === "OPEN";
+  }
+  return false;
+}
+
+function isUserRiskAction(event: FollowerBehaviourEventDoc): boolean {
+  if (event.type === "copy_trading_disabled") {
+    return event.metadata?.source !== "system_gate";
+  }
+  return event.type === "risk_settings_view" || event.type === "support_intent";
+}
+
 export async function calculateFollowerHealth(db: Db, user: UserDoc & { _id: ObjectId }): Promise<FollowerHealthScore> {
   const now = new Date();
   const since7d = new Date(now.getTime() - 7 * DAY_MS);
@@ -100,11 +125,11 @@ export async function calculateFollowerHealth(db: Db, user: UserDoc & { _id: Obj
   const realizedTrades = recentTrades.filter((trade) => trade.action === "CLOSE" || Number(trade.realizedPnl ?? 0) !== 0);
   const netPnl30d = realizedTrades.reduce((sum, trade) => sum + Number(trade.realizedPnl ?? 0), 0);
   const losingTrades30d = realizedTrades.filter((trade) => Number(trade.realizedPnl ?? 0) < 0).length;
-  const failedOrSkipped = recentTrades.filter((trade) => trade.status === "failed" || trade.status.startsWith("skipped_")).length;
+  const failedOrSkipped = recentTrades.filter(isUnresolvedCopyTradeIssue).length;
 
   const recentDashboardViews = recentEvents.filter((event) => event.type === "dashboard_view" && event.createdAt >= since7d).length;
-  const recentRiskActions = recentEvents.filter((event) => ["copy_trading_disabled", "risk_settings_view", "support_intent"].includes(event.type) && event.createdAt >= since7d).length;
-  const disabledRecently = recentEvents.some((event) => event.type === "copy_trading_disabled" && event.createdAt >= since30d);
+  const recentRiskActions = recentEvents.filter((event) => isUserRiskAction(event) && event.createdAt >= since7d).length;
+  const disabledRecently = recentEvents.some((event) => event.type === "copy_trading_disabled" && event.metadata?.source !== "system_gate" && event.createdAt >= since30d);
   const daysUntilRenewal = subscription?.currentPeriodEnd ? daysBetween(now, new Date(subscription.currentPeriodEnd)) : null;
 
   if (!user.emailVerified) {

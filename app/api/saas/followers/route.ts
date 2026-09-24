@@ -4,6 +4,7 @@ import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 import { getSaasDb } from "@/lib/saasDb";
 import { getCopyTradeMinActivationBalanceUSDT } from "@/lib/copyTradeSizing";
 import type { UserDoc, ExchangeKeyDoc, SubscriptionDoc, PerformanceFeeInvoiceDoc } from "@/lib/saasTypes";
+import type { FollowerBehaviourEventDoc } from "@/lib/followerHealth";
 import { calculateFollowerHealth, type FollowerHealthScore } from "@/lib/followerHealth";
 
 async function requireOperator ( req: NextRequest ): Promise<boolean> {
@@ -182,11 +183,18 @@ export async function PATCH ( req: NextRequest ) {
 
     const result = await db
       .collection<UserDoc>( "users" )
-      .updateOne( { _id: objectId }, { $set: { copyTradingEnabled } } );
+      .updateOne( { _id: objectId }, { $set: { copyTradingEnabled, updatedAt: new Date() } } );
 
     if ( result.matchedCount === 0 ) {
       return NextResponse.json( { error: "Follower not found." }, { status: 404 } );
     }
+
+    await db.collection<FollowerBehaviourEventDoc>( "follower_behaviour_events" ).insertOne( {
+      userId: objectId,
+      type: copyTradingEnabled ? "copy_trading_enabled" : "copy_trading_disabled",
+      metadata: { source: "operator_dashboard" },
+      createdAt: new Date(),
+    } );
 
     return NextResponse.json( { ok: true, copyTradingEnabled } );
   } catch ( err: unknown ) {

@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Invalid leader trade event. Expected leaderTradeId, action, symbol, side, leaderNotional, and leaderBalance.",
+          "Invalid leader trade event. Expected leaderTradeId, action, symbol, and side. OPEN events also require leaderNotional and leaderBalance.",
       },
       { status: 400 }
     );

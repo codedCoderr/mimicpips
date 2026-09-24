@@ -12,6 +12,16 @@ import type { UserDoc, SubscriptionDoc, PerformanceFeeInvoiceDoc, ExchangeKeyDoc
 
 const UNPAID_INVOICE_STATUSES: PerformanceFeeInvoiceStatus[] = [ "PENDING_APPROVAL", "APPROVED" ];
 
+interface CopyTradingBehaviourEventDoc {
+  userId: ObjectId;
+  type: "copy_trading_enabled" | "copy_trading_disabled";
+  metadata?: {
+    source?: string;
+    reason?: string;
+  };
+  createdAt: Date;
+}
+
 /**
  * 1. Email Reminders for Upcoming Subscription Renewals
  */
@@ -90,7 +100,7 @@ export async function enforceCopyTradingGates () {
   const subByUser = new Map( subDocs.map( ( s ) => [ s.userId.toString(), s ] ) );
   const pendingInvoiceUserIds = new Set( pendingInvoices.map( ( inv ) => inv.userId.toString() ) );
 
-  const disabledUserIds: ObjectId[] = [];
+  const disabledUsers: Array<{ id: ObjectId; reason: string }> = [];
 
   for ( const user of activeFollowers ) {
     const userIdStr = user._id!.toString();
@@ -104,15 +114,36 @@ export async function enforceCopyTradingGates () {
     const hasPendingInvoice = pendingInvoiceUserIds.has( userIdStr );
 
     if ( isUnverified || hasNoVerifiedKey || isBelowPauseBalance || isSubNonActive || hasPendingInvoice ) {
-      disabledUserIds.push( user._id! );
+      const reason = isUnverified
+        ? "email_unverified"
+        : hasNoVerifiedKey
+          ? "exchange_not_verified"
+          : isBelowPauseBalance
+            ? "below_pause_balance"
+            : isSubNonActive
+              ? "subscription_inactive"
+              : "pending_invoice";
+      disabledUsers.push( { id: user._id!, reason } );
     }
   }
 
+  const disabledUserIds = disabledUsers.map( ( user ) => user.id );
+
   if ( disabledUserIds.length > 0 ) {
-    await db.collection<UserDoc>( "users" ).updateMany(
-      { _id: { $in: disabledUserIds } },
-      { $set: { copyTradingEnabled: false, updatedAt: now } }
-    );
+    await Promise.all( [
+      db.collection<UserDoc>( "users" ).updateMany(
+        { _id: { $in: disabledUserIds } },
+        { $set: { copyTradingEnabled: false, updatedAt: now } }
+      ),
+      db.collection<CopyTradingBehaviourEventDoc>( "follower_behaviour_events" ).insertMany(
+        disabledUsers.map( ( user ) => ( {
+          userId: user.id,
+          type: "copy_trading_disabled",
+          metadata: { source: "system_gate", reason: user.reason },
+          createdAt: now,
+        } ) )
+      ),
+    ] );
   }
 
   return {
@@ -145,7 +176,7 @@ export async function autoEnableCopyTradingGates () {
 
   const userIds = inactiveFollowers.map( ( u ) => u._id! );
 
-  const [ keyDocs, subDocs, pendingInvoices ] = await Promise.all( [
+  const [ keyDocs, subDocs, pendingInvoices, latestDisableEvents ] = await Promise.all( [
     db
       .collection<ExchangeKeyDoc>( "exchange_keys" )
       .find( { userId: { $in: userIds }, verifiedAt: { $ne: null } } )
@@ -161,11 +192,26 @@ export async function autoEnableCopyTradingGates () {
         status: { $in: UNPAID_INVOICE_STATUSES },
       } )
       .toArray(),
+    db
+      .collection<CopyTradingBehaviourEventDoc>( "follower_behaviour_events" )
+      .aggregate<CopyTradingBehaviourEventDoc>( [
+        {
+          $match: {
+            userId: { $in: userIds },
+            type: "copy_trading_disabled",
+          },
+        },
+        { $sort: { createdAt: -1 } },
+        { $group: { _id: "$userId", event: { $first: "$$ROOT" } } },
+        { $replaceRoot: { newRoot: "$event" } },
+      ] )
+      .toArray(),
   ] );
 
   const keyByUser = new Map( keyDocs.map( ( k ) => [ k.userId.toString(), k ] ) );
   const activeSubUserIds = new Set( subDocs.map( ( s ) => s.userId.toString() ) );
   const pendingInvoiceUserIds = new Set( pendingInvoices.map( ( inv ) => inv.userId.toString() ) );
+  const latestDisableByUser = new Map( latestDisableEvents.map( ( event ) => [ event.userId.toString(), event ] ) );
 
   const enabledUserIds: ObjectId[] = [];
 
@@ -177,22 +223,50 @@ export async function autoEnableCopyTradingGates () {
     const hasActivationBalance = Number( key?.lastKnownBalanceUSDT ?? 0 ) >= minActivationBalanceUSDT;
     const hasActiveSub = activeSubUserIds.has( userIdStr );
     const hasNoPendingInvoice = !pendingInvoiceUserIds.has( userIdStr );
+    const latestDisable = latestDisableByUser.get( userIdStr );
+    const wasSystemPaused = latestDisable?.metadata?.source === "system_gate";
 
-    if ( hasVerifiedExchange && hasActivationBalance && hasActiveSub && hasNoPendingInvoice ) {
+    if ( wasSystemPaused && hasVerifiedExchange && hasActivationBalance && hasActiveSub && hasNoPendingInvoice ) {
       enabledUserIds.push( user._id! );
     }
   }
 
   if ( enabledUserIds.length > 0 ) {
-    await db.collection<UserDoc>( "users" ).updateMany(
-      { _id: { $in: enabledUserIds } },
-      { $set: { copyTradingEnabled: true, updatedAt: now } }
-    );
+    await Promise.all( [
+      db.collection<UserDoc>( "users" ).updateMany(
+        { _id: { $in: enabledUserIds } },
+        { $set: { copyTradingEnabled: true, updatedAt: now } }
+      ),
+      db.collection<CopyTradingBehaviourEventDoc>( "follower_behaviour_events" ).insertMany(
+        enabledUserIds.map( ( userId ) => ( {
+          userId,
+          type: "copy_trading_enabled",
+          metadata: { source: "system_gate", reason: "gates_restored" },
+          createdAt: now,
+        } ) )
+      ),
+    ] );
   }
 
   return {
     enabledCount: enabledUserIds.length,
     enabledUserIds: enabledUserIds.map( ( id ) => id.toString() ),
+  };
+}
+
+export async function runBillingAndGateCycle () {
+  const [ performanceFeeResults, renewalResults ] = await Promise.all( [
+    runPerformanceFeeBillingCycle(),
+    runSubscriptionRenewalCycle(),
+  ] );
+  const enforcement = await enforceCopyTradingGates();
+  const autoEnable = await autoEnableCopyTradingGates();
+
+  return {
+    performanceFees: performanceFeeResults,
+    renewals: renewalResults,
+    enforcement,
+    autoEnable,
   };
 }
 
@@ -207,22 +281,21 @@ export function initBillingCron () {
   }
   globalForCron.billingCronInitialized = true;
 
-  // Run gate sync sequentially every minute
-  // cron.schedule( "* * * * *", async () => {
-  //   try {
-  //     const enforcement = await enforceCopyTradingGates();
-  //     if ( enforcement.disabledCount > 0 ) {
-  //       console.log( `⚠️ [Cron] Disabled copy trading for ${ enforcement.disabledCount } follower(s).` );
-  //     }
+  cron.schedule( "*/5 * * * *", async () => {
+    try {
+      const enforcement = await enforceCopyTradingGates();
+      if ( enforcement.disabledCount > 0 ) {
+        console.log( `⚠️ [Cron] Disabled copy trading for ${ enforcement.disabledCount } follower(s).` );
+      }
 
-  //     const autoEnable = await autoEnableCopyTradingGates();
-  //     if ( autoEnable.enabledCount > 0 ) {
-  //       console.log( `🚀 [Cron] Auto-enabled copy trading for ${ autoEnable.enabledCount } follower(s).` );
-  //     }
-  //   } catch ( err ) {
-  //     console.error( "❌ [Cron] Per-minute gate sync failed:", err );
-  //   }
-  // } );
+      const autoEnable = await autoEnableCopyTradingGates();
+      if ( autoEnable.enabledCount > 0 ) {
+        console.log( `🚀 [Cron] Auto-enabled copy trading for ${ autoEnable.enabledCount } follower(s).` );
+      }
+    } catch ( err ) {
+      console.error( "❌ [Cron] Gate sync failed:", err );
+    }
+  } );
 
   // Marketing signal scanner every 30 minutes. It creates deduped proof points and
   // sends to the signal channel only when AUTO_TELEGRAM_MARKETING=true.
@@ -256,9 +329,7 @@ export function initBillingCron () {
   // Monthly billing run on 1st day of month at midnight
   cron.schedule( "0 0 1 * *", async () => {
     try {
-      await runSubscriptionRenewalCycle();
-      await runPerformanceFeeBillingCycle();
-      await enforceCopyTradingGates();
+      await runBillingAndGateCycle();
     } catch ( err ) {
       console.error( "❌ [Cron] Monthly billing run failed:", err );
     }
