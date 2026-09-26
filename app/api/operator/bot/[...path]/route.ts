@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 import { BOT_SESSION_COOKIE, verifyOperatorBotSessionToken } from "@/lib/operatorBotSession";
 
-const BOT_PROXY_TIMEOUT_MS = 10000;
+const DEFAULT_BOT_PROXY_TIMEOUT_MS = 15000;
+const REPORT_BOT_PROXY_TIMEOUT_MS = 60000;
 
 async function requireOperator(req: NextRequest): Promise<boolean> {
   const token = req.cookies.get(COOKIE_NAME)?.value;
@@ -22,9 +23,17 @@ async function proxyBot(req: NextRequest, path: string[]) {
   const upstreamUrl = new URL(`/${path.join("/")}`, botSession.baseUrl);
   req.nextUrl.searchParams.forEach((value, key) => upstreamUrl.searchParams.set(key, value));
 
+  const routePath = `/${path.join("/")}`;
   const body = req.method === "GET" || req.method === "HEAD" ? undefined : await req.text();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), BOT_PROXY_TIMEOUT_MS);
+  const timeoutMs = routePath.startsWith("/api/ledger") || routePath.startsWith("/api/performance")
+    ? REPORT_BOT_PROXY_TIMEOUT_MS
+    : DEFAULT_BOT_PROXY_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let didTimeout = false;
+  controller.signal.addEventListener("abort", () => {
+    didTimeout = true;
+  });
   const upstream = await fetch(upstreamUrl, {
     method: req.method,
     headers: {
@@ -38,7 +47,11 @@ async function proxyBot(req: NextRequest, path: string[]) {
 
   if (!upstream) {
     return NextResponse.json(
-      { error: "Could not reach the bot. Check the server address and that it's running." },
+      {
+        error: didTimeout
+          ? "The bot server took too long to generate this report. Try a shorter date range, then retry the larger export later."
+          : "Could not complete the request to the bot server. Check the server address and that it's running.",
+      },
       { status: 502 }
     );
   }

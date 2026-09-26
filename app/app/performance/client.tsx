@@ -19,13 +19,36 @@ interface TradeRecord {
   side: "LONG" | "SHORT";
   entryPrice: number;
   exitPrice: number;
+  pnl: number;
   roiPercentage: number;
   closedAt: string;
+}
+
+interface CopyTradeLogEntry {
+  id: string;
+  action: "OPEN" | "CLOSE";
+  symbol: string;
+  side: "LONG" | "SHORT";
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+  roiPercentage: number;
+  status: string;
+  executedAt: string;
+  createdAt: string;
 }
 
 function fmtUsd ( n: number | null ): string {
   if ( n === null ) return "—";
   return `$${ n.toLocaleString( "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) }`;
+}
+
+function filterStartDate(filter: DurationFilter): Date | null {
+  if (filter === "ALL") return null;
+  const now = new Date();
+  const days = filter === "7D" ? 7 : filter === "1M" ? 30 : filter === "3M" ? 90 : 365;
+  now.setDate(now.getDate() - days);
+  return now;
 }
 
 export function PerformanceClient () {
@@ -37,7 +60,7 @@ export function PerformanceClient () {
 
   const loadData = useCallback( () => {
     setLoading( true );
-    fetch( `/api/saas/leader-history?filter=${ filter }` )
+    fetch( "/api/saas/copy-trade-log?limit=50", { cache: "no-store" } )
       .then( async ( res ) => {
         const data = await res.json().catch( () => null );
         // fetch() only rejects on a network failure — a 401/500 response
@@ -51,8 +74,36 @@ export function PerformanceClient () {
         return data;
       } )
       .then( ( data ) => {
-        setStats( data.stats );
-        setTrades( data.trades );
+        const start = filterStartDate( filter );
+        const closedTrades: TradeRecord[] = ( data.entries as CopyTradeLogEntry[] )
+          .filter( ( entry ) => entry.action === "CLOSE" || ( entry.exitPrice ?? 0 ) > 0 || entry.status === "closed" )
+          .filter( ( entry ) => {
+            if ( !start ) return true;
+            const closedAt = new Date( entry.executedAt || entry.createdAt );
+            return closedAt >= start;
+          } )
+          .map( ( entry ) => ( {
+            id: entry.id,
+            symbol: ( entry.symbol || "UNKNOWN" ).split( ":" )[ 0 ],
+            side: entry.side,
+            entryPrice: entry.entryPrice ?? 0,
+            exitPrice: entry.exitPrice ?? 0,
+            pnl: entry.realizedPnl ?? 0,
+            roiPercentage: entry.roiPercentage ?? 0,
+            closedAt: entry.executedAt || entry.createdAt,
+          } ) );
+        const totalTrades = closedTrades.length;
+        const wins = closedTrades.filter( ( trade ) => trade.pnl > 0 ).length;
+        const pnl = closedTrades.reduce( ( sum, trade ) => sum + trade.pnl, 0 );
+        const totalProfitPercent = closedTrades.reduce( ( sum, trade ) => sum + trade.roiPercentage, 0 );
+
+        setStats( {
+          winRate: totalTrades > 0 ? Number( ( ( wins / totalTrades ) * 100 ).toFixed( 1 ) ) : 0,
+          totalProfitPercent: Number( totalProfitPercent.toFixed( 2 ) ),
+          totalTrades,
+          pnl,
+        } );
+        setTrades( closedTrades );
         setError( null );
       } )
       .catch( ( err: Error ) => {
@@ -86,8 +137,8 @@ export function PerformanceClient () {
           {/* Header & Filters */ }
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
             <div>
-              <span className="eyebrow">Leader Performance</span>
-              <h1 className="font-display text-2xl font-semibold mt-1">Trading History</h1>
+              <span className="eyebrow">Copied performance</span>
+              <h1 className="font-display text-2xl font-semibold mt-1">Your Trading History</h1>
             </div>
 
             <div className="flex items-center border border-[var(--hairline)] p-0.5" style={ { background: "var(--panel-raised)" } }>
@@ -143,7 +194,7 @@ export function PerformanceClient () {
           ) }
           <div className="panel overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--hairline)]">
-              <span className="eyebrow">Closed Positions ({ filter })</span>
+              <span className="eyebrow">Closed copied trades ({ filter })</span>
             </div>
 
             { loading ? (
@@ -167,7 +218,7 @@ export function PerformanceClient () {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--hairline)]">
-                      { [ "Symbol", "Side", "Entry Price", "Exit Price", "ROI", "Closed At" ].map( ( h ) => (
+                      { [ "Symbol", "Side", "Entry Price", "Exit Price", "PnL", "ROI", "Closed At" ].map( ( h ) => (
                         <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">
                           { h }
                         </th>
@@ -196,6 +247,9 @@ export function PerformanceClient () {
                           </td>
                           <td className="px-4 py-2.5 tabular">{ fmtUsd( t.entryPrice ) }</td>
                           <td className="px-4 py-2.5 tabular">{ fmtUsd( t.exitPrice ) }</td>
+                          <td className="px-4 py-2.5 font-semibold" style={ { color: t.pnl >= 0 ? "var(--long)" : "var(--short)" } }>
+                            { t.pnl >= 0 ? "+" : "" }{ fmtUsd( t.pnl ) }
+                          </td>
                           <td className="px-4 py-2.5 font-semibold" style={ { color: t.roiPercentage >= 0 ? "var(--long)" : "var(--short)" } }>
                             { t.roiPercentage >= 0 ? "+" : "" }{ t.roiPercentage }%
                           </td>

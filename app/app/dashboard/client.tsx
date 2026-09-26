@@ -62,6 +62,8 @@ interface UnifiedTrade {
   status: string;
   detail: string | null;
   executedAt: string;
+  openedAt: string;
+  closedAt: string | null;
   isOpen: boolean;
 }
 
@@ -101,6 +103,34 @@ function fmtPrice ( n: number | null | undefined ): string {
 
 function fmtTradePrice ( n: number | null | undefined ): string {
   return n && Number.isFinite( n ) && n > 0 ? fmtPrice( n ) : "—";
+}
+
+function formatDuration ( start: string | null | undefined, end?: string | null ): string {
+  if ( !start ) return "—";
+  const startTime = new Date( start ).getTime();
+  const endTime = end ? new Date( end ).getTime() : Date.now();
+  if ( !Number.isFinite( startTime ) || !Number.isFinite( endTime ) || endTime < startTime ) return "—";
+
+  const minutes = Math.max( 0, Math.floor( ( endTime - startTime ) / 60_000 ) );
+  const days = Math.floor( minutes / 1440 );
+  const hours = Math.floor( ( minutes % 1440 ) / 60 );
+  const mins = minutes % 60;
+
+  if ( days > 0 ) return `${ days }d ${ hours }h`;
+  if ( hours > 0 ) return `${ hours }h ${ mins }m`;
+  return `${ mins }m`;
+}
+
+function formatRelativeTime ( iso: string | null | undefined ): string {
+  if ( !iso ) return "—";
+  const time = new Date( iso ).getTime();
+  if ( !Number.isFinite( time ) ) return "—";
+  const minutes = Math.max( 0, Math.floor( ( Date.now() - time ) / 60_000 ) );
+  const days = Math.floor( minutes / 1440 );
+  const hours = Math.floor( ( minutes % 1440 ) / 60 );
+  if ( days > 0 ) return `${ days }d ago`;
+  if ( hours > 0 ) return `${ hours }h ago`;
+  return minutes <= 1 ? "just now" : `${ minutes }m ago`;
 }
 
 interface GateRowProps {
@@ -449,6 +479,8 @@ export function CopyTradingDashboardClient ( {
           status: entry.status,
           detail: entry.detail,
           executedAt: entry.executedAt || entry.createdAt,
+          openedAt: entry.action === "OPEN" ? entry.executedAt || entry.createdAt : entry.createdAt,
+          closedAt: entry.action === "CLOSE" ? entry.executedAt || entry.createdAt : null,
           isOpen: entry.action === "OPEN",
         } );
       }
@@ -462,6 +494,7 @@ export function CopyTradingDashboardClient ( {
         row.atrPeriod = entry.atrPeriod ?? row.atrPeriod;
         row.atrMultiplier = entry.atrMultiplier ?? row.atrMultiplier;
         row.marginAllocated = entry.marginAllocated || row.marginAllocated;
+        row.openedAt = entry.executedAt || entry.createdAt || row.openedAt;
       } else if ( entry.action === "CLOSE" || ( entry.exitPrice ?? 0 ) > 0 ) {
         row.entryPrice = entry.entryPrice || row.entryPrice;
         row.markPrice = entry.markPrice ?? row.markPrice;
@@ -471,6 +504,8 @@ export function CopyTradingDashboardClient ( {
         row.roiPercentage = entry.roiPercentage;
         row.status = entry.status;
         row.detail = entry.detail || row.detail;
+        row.closedAt = entry.executedAt || entry.createdAt || row.closedAt;
+        row.executedAt = entry.executedAt || entry.createdAt || row.executedAt;
         row.isOpen = false;
       }
     }
@@ -478,9 +513,14 @@ export function CopyTradingDashboardClient ( {
   } )();
 
   const totalCopiedTrades = unifiedTrades.length;
-  const activeTradesCount = unifiedTrades.filter( e => e.isOpen ).length;
-  const protectedActiveTrades = unifiedTrades.filter( e => e.isOpen && e.stopLossPrice ).length;
-  const closedTrades = unifiedTrades.filter( e => !e.isOpen );
+  const openTrades = unifiedTrades
+    .filter( e => e.isOpen )
+    .sort( ( a, b ) => new Date( b.openedAt ).getTime() - new Date( a.openedAt ).getTime() );
+  const activeTradesCount = openTrades.length;
+  const protectedActiveTrades = openTrades.filter( e => e.stopLossPrice ).length;
+  const closedTrades = unifiedTrades
+    .filter( e => !e.isOpen )
+    .sort( ( a, b ) => new Date( b.closedAt ?? b.executedAt ).getTime() - new Date( a.closedAt ?? a.executedAt ).getTime() );
   const netPnl = closedTrades.reduce( ( sum, e ) => sum + ( e.realizedPnl || 0 ), 0 );
   const winningTrades = closedTrades.filter( e => ( e.realizedPnl || 0 ) > 0 ).length;
   const winRate = closedTrades.length > 0 ? ( winningTrades / closedTrades.length ) * 100 : 0;
@@ -734,12 +774,12 @@ export function CopyTradingDashboardClient ( {
 
           <div className="panel overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--hairline)]">
-              <span className="eyebrow">Recent copy-trade activity</span>
+              <span className="eyebrow">Open copy positions ({ activeTradesCount })</span>
             </div>
 
             { logLoading && (
               <div className="divide-y divide-[var(--hairline)]">
-                { Array.from( { length: 6 } ).map( ( _, i ) => (
+                { Array.from( { length: 3 } ).map( ( _, i ) => (
                   <div key={ i } className="px-4 py-3 flex items-center gap-4">
                     <div className="h-3 w-14 bg-[var(--panel-raised)] animate-pulse" />
                     <div className="h-3 w-10 bg-[var(--panel-raised)] animate-pulse" />
@@ -756,22 +796,22 @@ export function CopyTradingDashboardClient ( {
               </div>
             ) }
 
-            { !logLoading && unifiedTrades.length === 0 && (
+            { !logLoading && openTrades.length === 0 && (
               <div className="p-8 text-center">
                 <p className="text-sm text-[var(--muted)] font-mono">
                   { enabled
-                    ? "No copy-trade activity yet — this fills in the next time the leader opens a position."
+                    ? "No open copied positions. The table fills when the leader has a live trade copied to your account."
                     : "Nothing to show yet. Turn on copy trading above once you're ready." }
                 </p>
               </div>
             ) }
 
-            { !logLoading && unifiedTrades.length > 0 && (
+            { !logLoading && openTrades.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--hairline)]">
-                      { [ "Symbol", "Side", "Entry / Exit", "Risk Guard", "Your Size", "PnL & ROI", "Status", "When" ].map( ( h ) => (
+                      { [ "Symbol", "Side", "Entry", "Mark", "Your Size", "PnL", "Open for", "SL", "Progress" ].map( ( h ) => (
                         <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">
                           { h }
                         </th>
@@ -779,79 +819,104 @@ export function CopyTradingDashboardClient ( {
                     </tr>
                   </thead>
                   <tbody className="font-mono">
-                    { unifiedTrades.map( ( e ) => (
-                      <tr
-                        key={ e.id }
-                        className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors text-xs"
-                      >
-                        <td className="px-4 py-2.5 font-semibold whitespace-nowrap">
-                          { ( e.symbol || "UNKNOWN" ).split( ":" )[ 0 ] }
-                        </td>
+                    { openTrades.map( ( e ) => (
+                      <tr key={ e.id } className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors text-xs">
+                        <td className="px-4 py-2.5 font-semibold whitespace-nowrap">{ ( e.symbol || "UNKNOWN" ).split( ":" )[ 0 ] }</td>
                         <td className="px-4 py-2.5">
-                          <span
-                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                            style={ {
-                              color: e.side === "LONG" ? "var(--long)" : "var(--short)",
-                              border: `1px solid ${ e.side === "LONG" ? "var(--long-dim)" : "var(--short-dim)" }`,
-                            } }
-                          >
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={ { color: e.side === "LONG" ? "var(--long)" : "var(--short)", border: `1px solid ${ e.side === "LONG" ? "var(--long-dim)" : "var(--short-dim)" }` } }>
                             { e.side || "LONG" }
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                          <div>In: { fmtTradePrice( e.entryPrice ) }</div>
-                          { e.isOpen && e.markPrice ? (
-                            <div>Mark: { fmtTradePrice( e.markPrice ) }</div>
-                          ) : null }
-                          <div>
-                            Out:{ " " }
-                            { ( e.exitPrice ?? 0 ) > 0
-                              ? fmtPrice( e.exitPrice )
-                              : e.isOpen
-                                ? "Active"
-                                : "—" }
-                          </div>
-                        </td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ fmtTradePrice( e.entryPrice ) }</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">{ fmtTradePrice( e.markPrice ) }</td>
+                        <td className="px-4 py-2.5 tabular text-[var(--text)]">{ fmtUsd( e.marginAllocated ?? 0 ) }</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <div
-                            className="font-semibold"
-                            style={ { color: e.stopLossPrice && e.isOpen ? "var(--long)" : e.isOpen ? "var(--warn)" : "var(--muted)" } }
-                          >
-                            { stopLossLabel( e ) }
-                          </div>
-                          { e.stopLossPrice ? (
-                            <div className="text-[10px] text-[var(--muted)]">
-                              Stop: { fmtPrice( e.stopLossPrice ) }
-                              { e.stopLossType === "ATR" && e.atrMultiplier ? ` • ${ e.atrMultiplier }x ATR` : "" }
-                              { stopDistancePct( e ) !== null ? ` • ${ Math.max( 0, stopDistancePct( e )! ).toFixed( 1 ) }% away` : "" }
-                            </div>
-                          ) : (
-                            <div className="text-[10px] text-[var(--muted)]">
-                              { e.isOpen ? "Waiting for bot stop data" : "No longer live" }
-                            </div>
-                          ) }
-                        </td>
-                        <td className="px-4 py-2.5 tabular text-[var(--text)]">
-                          { fmtUsd( e.marginAllocated ?? 0 ) }
-                        </td>
-                        <td className="px-4 py-2.5 whitespace-nowrap">
-                          <div
-                            className="font-semibold"
-                            style={ { color: ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long)" : "var(--short)" } }
-                          >
+                          <div className="font-semibold" style={ { color: ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long)" : "var(--short)" } }>
                             { ( e.realizedPnl ?? 0 ) >= 0 ? "+" : "" }{ fmtUsd( e.realizedPnl ?? 0 ) } ({ ( e.roiPercentage ?? 0 ) >= 0 ? "+" : "" }{ Number( e.roiPercentage ?? 0 ).toFixed( 2 ) }%)
                           </div>
                         </td>
-                        <td className="px-4 py-2.5" style={ { color: e.isOpen ? "var(--long)" : statusColor( e.status ) } }>
-                          <div>{ e.isOpen ? "Active" : statusLabel( e.status || "SUCCESS" ) }</div>
-                          { e.detail && (
-                            <div className="max-w-[220px] truncate text-[10px] text-[var(--muted)]" title={ e.detail }>
-                              { e.detail }
-                            </div>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ formatDuration( e.openedAt ) }</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="font-semibold" style={ { color: e.stopLossPrice ? "var(--long)" : "var(--warn)" } }>
+                            { e.stopLossPrice ? fmtPrice( e.stopLossPrice ) : "Pending" }
+                          </div>
+                          { stopDistancePct( e ) !== null && (
+                            <div className="text-[10px] text-[var(--muted)]">{ Math.max( 0, stopDistancePct( e )! ).toFixed( 1 ) }% away</div>
                           ) }
                         </td>
-                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">
-                          { new Date( e.executedAt ).toLocaleString() }
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="font-semibold" style={ { color: e.stopLossPrice ? "var(--long)" : "var(--muted)" } }>
+                            { stopLossLabel( e ) }
+                          </div>
+                          <div className="text-[10px] text-[var(--muted)]">Out: Active</div>
+                        </td>
+                      </tr>
+                    ) ) }
+                  </tbody>
+                </table>
+              </div>
+            ) }
+          </div>
+
+          <div className="panel overflow-hidden">
+            <div className="px-5 py-3 border-b border-[var(--hairline)]">
+              <span className="eyebrow">Recent copy trades</span>
+            </div>
+
+            { logLoading && (
+              <div className="divide-y divide-[var(--hairline)]">
+                { Array.from( { length: 6 } ).map( ( _, i ) => (
+                  <div key={ i } className="px-4 py-3 flex items-center gap-4">
+                    <div className="h-3 w-14 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-10 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-24 bg-[var(--panel-raised)] animate-pulse" />
+                    <div className="h-3 w-16 bg-[var(--panel-raised)] animate-pulse ml-auto" />
+                  </div>
+                ) ) }
+              </div>
+            ) }
+
+            { !logLoading && closedTrades.length === 0 && (
+              <div className="p-8 text-center">
+                <p className="text-sm text-[var(--muted)] font-mono">No closed copied trades yet.</p>
+              </div>
+            ) }
+
+            { !logLoading && closedTrades.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--hairline)]">
+                      { [ "Symbol", "Side", "Entry", "Exit", "Held", "PnL", "Closed", "Reason" ].map( ( h ) => (
+                        <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">{ h }</th>
+                      ) ) }
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    { closedTrades.map( ( e ) => (
+                      <tr key={ e.id } className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors text-xs">
+                        <td className="px-4 py-2.5 font-semibold whitespace-nowrap">{ ( e.symbol || "UNKNOWN" ).split( ":" )[ 0 ] }</td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={ { color: e.side === "LONG" ? "var(--long)" : "var(--short)", border: `1px solid ${ e.side === "LONG" ? "var(--long-dim)" : "var(--short-dim)" }` } }>
+                            { e.side || "LONG" }
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ fmtTradePrice( e.entryPrice ) }</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">{ fmtTradePrice( e.exitPrice ) }</td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ formatDuration( e.openedAt, e.closedAt ?? e.executedAt ) }</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="font-semibold" style={ { color: ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long)" : "var(--short)" } }>
+                            { ( e.realizedPnl ?? 0 ) >= 0 ? "+" : "" }{ fmtUsd( e.realizedPnl ?? 0 ) }
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ formatRelativeTime( e.closedAt ?? e.executedAt ) }</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap" style={ { color: statusColor( e.status ) } }>
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5" style={ { border: `1px solid ${ ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long-dim)" : "var(--short-dim)" }` } }>
+                            { statusLabel( e.status || "SUCCESS" ) }
+                          </span>
+                          { e.detail && (
+                            <div className="max-w-[220px] truncate text-[10px] text-[var(--muted)] mt-1" title={ e.detail }>{ e.detail }</div>
+                          ) }
                         </td>
                       </tr>
                     ) ) }

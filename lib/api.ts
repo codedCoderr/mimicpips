@@ -36,7 +36,7 @@ async function call<T>(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
@@ -46,7 +46,8 @@ async function call<T>(
     throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
   }
   if (!res.ok) {
-    throw new ApiError(`Request failed (${res.status}).`, res.status);
+    const data = await res.json().catch(() => null);
+    throw new ApiError(data?.error ?? `Request failed (${res.status}).`, res.status);
   }
   return res.json();
 }
@@ -107,7 +108,7 @@ export async function closePosition(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
@@ -143,7 +144,7 @@ export async function reconcileTakeProfit(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
@@ -179,7 +180,7 @@ export async function forceStopLossClose(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
@@ -223,7 +224,7 @@ export async function repairTradeAccounting(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
@@ -286,7 +287,7 @@ async function downloadCsv(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
@@ -295,7 +296,10 @@ async function downloadCsv(
     markBotSessionExpired();
     throw new ApiError("Bot connection expired. Reconnect the bot to continue.", 401);
   }
-  if (!res.ok) throw new ApiError(`Request failed (${res.status}).`, res.status);
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(data?.error ?? `Request failed (${res.status}).`, res.status);
+  }
 
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);
@@ -372,7 +376,7 @@ export async function startBacktest(
     });
   } catch {
     throw new ApiError(
-      "Could not reach the bot. Check the server address and that it's running.",
+      "Could not complete the request to the bot server. This can mean the server is unreachable, or that it took too long to respond (e.g. a slow ledger/report request timing out at a proxy) — check the server address, that it is running, and try a shorter date range if this was a report request.",
       0
     );
   }
