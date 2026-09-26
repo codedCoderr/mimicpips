@@ -56,6 +56,14 @@ const RiskPanel = dynamic(
   { ssr: false, loading: () => <div className='h-48 panel animate-pulse' /> }
 );
 
+const PropFirmRiskPanel = dynamic(
+  () =>
+    import("@/components/PropFirmRiskPanel").then(
+      (mod) => mod.PropFirmRiskPanel
+    ),
+  { ssr: false, loading: () => <div className='h-80 panel animate-pulse' /> }
+);
+
 export default function DashboardPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
@@ -258,6 +266,7 @@ export default function DashboardPage() {
           <div className='grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 max-w-[1400px] mx-auto'>
             <div className='space-y-6 min-w-0'>
               <AccountSummary snapshot={displaySnapshot} />
+              <PropFirmRiskPanel risk={displaySnapshot.propFirmRisk ?? null} />
               <PerformanceSummaryPanel session={session} />
               <FollowersSummaryPanel />
               <PositionsTable

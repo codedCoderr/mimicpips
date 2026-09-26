@@ -65,6 +65,71 @@ export interface RiskStatus {
   currentWalletBalance: number;
 }
 
+export type RiskSeverity = "OK" | "WATCH" | "WARNING" | "BREACHED";
+
+export interface PropFirmRiskRules {
+  dailyDrawdownLimitPct: number;
+  warningThresholdPct: number;
+  maxPositions: number;
+  maxAccountExposurePct: number;
+  minFidelityScore: number;
+}
+
+export interface PropFirmTelemetryBucket {
+  key: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  pnl: number;
+  avgR: number | null;
+  profitFactor: number | null;
+}
+
+export interface PropFirmRiskDashboard {
+  generatedAt: string;
+  windowDays: number;
+  rules: PropFirmRiskRules;
+  account: {
+    currentEquity: number;
+    estimatedDayStartEquity: number;
+    dailyPnl: number;
+    dailyDrawdownPct: number;
+    drawdownUsagePct: number;
+    status: RiskSeverity;
+  };
+  openRisk: {
+    positions: number;
+    entryPositions: number;
+    runners: number;
+    totalNotional: number;
+    accountExposurePct: number;
+    largestSymbolExposurePct: number;
+    largestSymbol: string | null;
+  };
+  telemetry: {
+    trades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    netPnl: number;
+    avgR: number | null;
+    expectancyR: number | null;
+    profitFactor: number | null;
+    maxClosedTradeLoss: number;
+    bestSymbols: PropFirmTelemetryBucket[];
+    worstSymbols: PropFirmTelemetryBucket[];
+    bySession: PropFirmTelemetryBucket[];
+    topExitLeaks: PropFirmTelemetryBucket[];
+  };
+  alerts: Array<{
+    severity: RiskSeverity;
+    code: string;
+    message: string;
+  }>;
+  recommendations: string[];
+}
+
 export interface DashboardSnapshot {
   timestamp: string;
   tradingMode: string;
@@ -85,6 +150,7 @@ export interface DashboardSnapshot {
     maxPositions: number;
   };
   positions: DashboardPosition[];
+  propFirmRisk?: PropFirmRiskDashboard | null;
 }
 
 export type BotEventType =
