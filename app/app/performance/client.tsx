@@ -33,18 +33,32 @@ export function PerformanceClient () {
   const [ stats, setStats ] = useState<LeaderStats | null>( null );
   const [ trades, setTrades ] = useState<TradeRecord[]>( [] );
   const [ loading, setLoading ] = useState( true );
+  const [ error, setError ] = useState<string | null>( null );
 
   const loadData = useCallback( () => {
     setLoading( true );
     fetch( `/api/saas/leader-history?filter=${ filter }` )
-      .then( ( res ) => res.json() )
+      .then( async ( res ) => {
+        const data = await res.json().catch( () => null );
+        // fetch() only rejects on a network failure — a 401/500 response
+        // still resolves successfully, so this must be checked explicitly
+        // or an error response (e.g. an expired session, or a thrown
+        // exception in the route) silently renders as "no trades found",
+        // indistinguishable from genuinely empty data.
+        if ( !res.ok ) {
+          throw new Error( data?.error ?? `Request failed (${ res.status }).` );
+        }
+        return data;
+      } )
       .then( ( data ) => {
         setStats( data.stats );
         setTrades( data.trades );
+        setError( null );
       } )
-      .catch( () => {
+      .catch( ( err: Error ) => {
         setStats( null );
         setTrades( [] );
+        setError( err.message );
       } )
       .finally( () => setLoading( false ) );
   }, [ filter ] );
@@ -122,6 +136,11 @@ export function PerformanceClient () {
           </div>
 
           {/* Trade Table */ }
+          { error && (
+            <div className="text-sm text-[var(--short)] font-mono border border-[var(--short-dim)] bg-[var(--short-dim)]/10 px-3 py-2">
+              { error }
+            </div>
+          ) }
           <div className="panel overflow-hidden">
             <div className="px-5 py-3 border-b border-[var(--hairline)]">
               <span className="eyebrow">Closed Positions ({ filter })</span>
