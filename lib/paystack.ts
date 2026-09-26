@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
  * Server-side Paystack client. Mirrors the e-commerce platform's proven
@@ -184,5 +184,17 @@ export function verifyWebhookSignature(rawBody: string, signatureHeader: string 
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return false;
   const hash = createHmac("sha512", secret).update(rawBody).digest("hex");
-  return hash === signatureHeader;
+
+  // Timing-safe comparison, not === : a plain string equality check
+  // short-circuits on the first mismatched character, which makes the
+  // comparison time leak information about how many leading characters
+  // were correct — a textbook timing side-channel on HMAC verification.
+  // timingSafeEqual takes the same time regardless of where a mismatch
+  // occurs. Both buffers must be equal length or timingSafeEqual throws,
+  // so that's checked first (a length mismatch is already definitive
+  // proof of an invalid signature, no timing risk there).
+  const hashBuffer = Buffer.from(hash, "hex");
+  const signatureBuffer = Buffer.from(signatureHeader, "hex");
+  if (hashBuffer.length !== signatureBuffer.length) return false;
+  return timingSafeEqual(hashBuffer, signatureBuffer);
 }

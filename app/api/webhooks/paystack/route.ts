@@ -83,20 +83,42 @@ async function handleSubscriptionPayment ( db: Db, data: PaystackWebhookData | u
   if (data?.metadata?.type !== "subscription") return;
   if (data?.currency && data.currency !== "NGN") return;
 
+  const reference = data?.reference;
+  if (!reference) return;
+
+  // Fetch the pending subscription first so the amount can be verified
+  // explicitly, the same way handlePerformanceFeePayment already does —
+  // this used to only apply a monthlyFeeNGN filter when data.amount
+  // happened to be a parseable number, silently skipping the amount
+  // check entirely otherwise rather than rejecting. A missing/malformed
+  // amount on a real Paystack payload would be unusual, but this
+  // shouldn't rely on that alone; verifying against the stored fee is
+  // cheap and closes the gap either way.
+  const pending = await db.collection<SubscriptionDoc>("subscriptions").findOne({
+    userId: new ObjectId(userId),
+    paystackReference: reference,
+    status: "PENDING_PAYMENT",
+  });
+  if (!pending) return;
+
+  const amountNGN = typeof data?.amount === "number" ? data.amount / 100 : null;
+  if (amountNGN === null || Math.round(pending.monthlyFeeNGN * 100) !== Math.round(amountNGN * 100)) {
+    console.warn(
+      `[handleSubscriptionPayment] Amount mismatch or unparseable amount for reference: ${reference}`
+    );
+    return;
+  }
+
   const authorizationCode = data?.authorization?.authorization_code ?? null;
   const customerCode = data?.customer?.customer_code ?? null;
   const now = new Date();
   const periodEnd = new Date( now );
   periodEnd.setMonth( periodEnd.getMonth() + 1 );
 
-  const amountNGN = typeof data?.amount === "number" ? data.amount / 100 : null;
-
   await db.collection<SubscriptionDoc>( "subscriptions" ).updateOne(
     {
-      userId: new ObjectId( userId ),
-      paystackReference: data?.reference,
+      _id: pending._id,
       status: "PENDING_PAYMENT",
-      ...(amountNGN !== null ? { monthlyFeeNGN: amountNGN } : {}),
     },
     {
       $set: {

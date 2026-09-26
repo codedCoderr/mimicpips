@@ -335,6 +335,7 @@ async function executeForFollower(
       decryptSecret(follower.key.apiSecretEncrypted),
     ]);
     const execution = await callBotCopyTradeExecution(event, {
+      followerId: String(follower.user._id),
       apiKey,
       apiSecret,
       followerNotional: executionNotional,
@@ -416,7 +417,7 @@ async function executeForFollower(
 
 async function callBotCopyTradeExecution(
   event: LeaderTradeEvent,
-  follower: { apiKey: string; apiSecret: string; followerNotional: number }
+  follower: { followerId: string; apiKey: string; apiSecret: string; followerNotional: number }
 ): Promise<BotCopyTradeResponse> {
   const botUrl = process.env.BOT_SERVER_URL;
   const serviceKey = process.env.SAAS_SERVICE_KEY;
@@ -431,6 +432,7 @@ async function callBotCopyTradeExecution(
       "X-Service-Key": serviceKey,
     },
     body: JSON.stringify({
+      followerId: follower.followerId,
       apiKey: follower.apiKey,
       apiSecret: follower.apiSecret,
       action: event.action,

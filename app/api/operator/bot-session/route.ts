@@ -92,7 +92,21 @@ async function validateBotBaseUrl(
     };
   }
 
-  // Replace the strict HTTPS check with an environment flag bypass:
+  // These two protections (HTTPS requirement, private-IP/SSRF blocking)
+  // both silently no-op whenever NODE_ENV isn't exactly "production" —
+  // a deliberate dev convenience, but also a real risk: any staging or
+  // prod-like deployment that forgets to set NODE_ENV=production loses
+  // BOTH protections with nothing logged to notice it happened. Logging
+  // once here so a misconfigured non-dev deployment shows up somewhere
+  // rather than failing silently.
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      "[bot-session] NODE_ENV is not 'production' — HTTPS requirement and " +
+        "private-IP/SSRF protection for the bot connection are BOTH disabled. " +
+        "If this is a staging or production deployment, set NODE_ENV=production."
+    );
+  }
+
   const allowHttp =
     process.env.ALLOW_HTTP_BOT_URL === "true" ||
     process.env.NODE_ENV !== "production";
@@ -160,10 +174,7 @@ export async function POST(req: NextRequest) {
   const upstream = await fetch(new URL("/api/snapshot", validation.url), {
     headers: { "X-API-Key": apiKey },
     signal: controller.signal,
-  }).catch((err) => {
-    console.error("DEBUG FETCH ERROR:", err); // <-- Expose the actual Node.js network error
-    return null;
-  });
+  }).catch(() => null);
   clearTimeout(timeout);
 
   if (!upstream) {
