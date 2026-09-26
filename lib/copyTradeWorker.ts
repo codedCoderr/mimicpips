@@ -6,6 +6,8 @@ import { getErrorMessage } from "./errorMessage";
 import type {
   CopyTradeLogDoc,
   CopyTradeLogStatus,
+  CopyTradeAuditEventDoc,
+  CopyTradeAuditEventType,
   ExchangeKeyDoc,
   UserDoc,
   SubscriptionDoc,
@@ -254,6 +256,15 @@ async function executeForFollower(
   const userId = follower.user._id;
   const claim = await claimCopyTradeLog(db, event, follower);
   if (!claim.claimed) {
+    await writeAuditEvent(db, event, follower.user._id, {
+      type: "claim.duplicate",
+      status: "duplicate",
+      detail: claim.existing?.detail ?? "This leader trade was already processed for the follower.",
+      metadata: {
+        existingStatus: claim.existing?.status ?? null,
+        existingOrderId: claim.existing?.followerOrderId ?? null,
+      },
+    });
     return {
       userId: userId.toString(),
       status: "skipped_duplicate",
@@ -272,6 +283,11 @@ async function executeForFollower(
     : null;
   const followerBalance = follower.key.lastKnownBalanceUSDT;
   if (event.action === "OPEN" && (!followerBalance || followerBalance <= 0)) {
+    await writeAuditEvent(db, event, userId, {
+      type: "execution.skipped",
+      status: "skipped_balance_unavailable",
+      detail: "Follower balance is unavailable.",
+    });
     return writeLog(db, event, follower, {
       status: "skipped_balance_unavailable",
       followerNotional: null,
@@ -294,6 +310,12 @@ async function executeForFollower(
         createdAt: now,
       }),
     ]);
+    await writeAuditEvent(db, event, userId, {
+      type: "execution.skipped",
+      status: "skipped_insufficient_balance",
+      detail: `Copy trading paused because available balance is below the $${pauseBalanceUSDT.toFixed(2)} runtime safety floor.`,
+      metadata: { followerBalance, pauseBalanceUSDT },
+    });
     return writeLog(db, event, follower, {
       status: "skipped_insufficient_balance",
       followerNotional: null,
@@ -321,6 +343,12 @@ async function executeForFollower(
       : sizing.followerNotional;
 
   if (event.action === "OPEN" && (sizing.belowMinimum || sizing.followerNotional <= 0)) {
+    await writeAuditEvent(db, event, userId, {
+      type: "execution.skipped",
+      status: "skipped_insufficient_balance",
+      detail: `Calculated follower trade size is below the $${sizing.minNotionalUSDT.toFixed(2)} minimum copy-trade amount.`,
+      metadata: { ...sizing },
+    });
     return writeLog(db, event, follower, {
       status: "skipped_insufficient_balance",
       followerNotional: sizing.followerNotional,
@@ -353,6 +381,12 @@ async function executeForFollower(
           ? (realizedPnl / sizing.followerNotional) * 100
           : null;
 
+      await writeAuditEvent(db, event, userId, {
+        type: "execution.repaired_already_flat",
+        status: "closed",
+        detail: "Follower was already flat when the leader close event arrived.",
+        metadata: { reason, entryPrice, exitPrice, realizedPnl, roiPercentage },
+      });
       return writeLog(db, event, follower, {
         status: "closed",
         followerNotional: sizing.followerNotional,
@@ -366,6 +400,12 @@ async function executeForFollower(
     }
 
     if (!execution.ok) {
+      await writeAuditEvent(db, event, userId, {
+        type: "execution.failed",
+        status: "failed",
+        detail: userFacingExecutionError(reason || "Bot rejected the copy-trade execution."),
+        metadata: { reason },
+      });
       return writeLog(db, event, follower, {
         status: "failed",
         followerNotional: sizing.followerNotional,
@@ -391,6 +431,19 @@ async function executeForFollower(
         ? (realizedPnl / sizing.followerNotional) * 100
         : null;
 
+    await writeAuditEvent(db, event, userId, {
+      type: "execution.succeeded",
+      status: event.action === "CLOSE" ? "closed" : "executed",
+      detail: sizing.cappedByMaxPct ? "Executed with max-notional cap applied." : null,
+      metadata: {
+        orderId: execution.followerOrderId ?? execution.orderId ?? null,
+        entryPrice,
+        exitPrice,
+        realizedPnl,
+        roiPercentage,
+        cappedByMaxPct: sizing.cappedByMaxPct,
+      },
+    });
     return writeLog(db, event, follower, {
       status: event.action === "CLOSE" ? "closed" : "executed",
       followerNotional: sizing.followerNotional,
@@ -406,6 +459,11 @@ async function executeForFollower(
       detail: sizing.cappedByMaxPct ? "Executed with max-notional cap applied." : null,
     });
   } catch (error: unknown) {
+    await writeAuditEvent(db, event, userId, {
+      type: "execution.failed",
+      status: "failed",
+      detail: userFacingExecutionError(getErrorMessage(error, "Copy-trade execution failed.")),
+    });
     return writeLog(db, event, follower, {
       status: "failed",
       followerNotional: sizing.followerNotional,
@@ -506,6 +564,20 @@ async function writeLog(
     { upsert: true }
   );
 
+  await writeAuditEvent(db, event, follower.user._id, {
+    type: "log.updated",
+    status: result.status,
+    detail: result.detail,
+    metadata: {
+      followerOrderId: result.followerOrderId,
+      followerNotional: result.followerNotional,
+      entryPrice: result.entryPrice,
+      exitPrice: result.exitPrice,
+      realizedPnl: result.realizedPnl,
+      roiPercentage: result.roiPercentage,
+    },
+  });
+
   return {
     userId: follower.user._id.toString(),
     ...result,
@@ -546,6 +618,11 @@ async function claimCopyTradeLog(
       executedAt,
       createdAt: now,
     });
+    await writeAuditEvent(db, event, follower.user._id, {
+      type: "claim.created",
+      status: "claimed",
+      detail: "Processing copy-trade event.",
+    });
     return { claimed: true };
   } catch (error: unknown) {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -570,7 +647,15 @@ async function claimCopyTradeLog(
           },
         }
       );
-      if (reclaimed.modifiedCount > 0) return { claimed: true };
+      if (reclaimed.modifiedCount > 0) {
+        await writeAuditEvent(db, event, follower.user._id, {
+          type: "claim.reclaimed",
+          status: "reclaimed",
+          detail: "Retrying failed copy-trade close event.",
+          metadata: { previousStatus: existing.status },
+        });
+        return { claimed: true };
+      }
     }
 
     if (
@@ -590,6 +675,13 @@ async function claimCopyTradeLog(
             },
           }
         );
+        await writeAuditEvent(db, event, follower.user._id, {
+          type: "claim.stale_open_blocked",
+          status: "failed",
+          detail:
+            "Stale copy-trade open claim detected. Auto-retry is blocked to avoid accidentally opening a duplicate follower position.",
+          metadata: { staleCreatedAt: existing.createdAt.toISOString() },
+        });
         const failedExisting = await db.collection<CopyTradeLogDoc>("copy_trade_log").findOne({
           _id: existing._id,
         });
@@ -605,10 +697,46 @@ async function claimCopyTradeLog(
           },
         }
       );
-      if (reclaimed.modifiedCount > 0) return { claimed: true };
+      if (reclaimed.modifiedCount > 0) {
+        await writeAuditEvent(db, event, follower.user._id, {
+          type: "claim.reclaimed",
+          status: "reclaimed",
+          detail: "Reclaimed stale copy-trade processing claim.",
+          metadata: { staleCreatedAt: existing.createdAt.toISOString() },
+        });
+        return { claimed: true };
+      }
     }
     return { claimed: false, existing };
   }
+}
+
+async function writeAuditEvent(
+  db: Db,
+  event: LeaderTradeEvent,
+  userId: ObjectId,
+  audit: {
+    type: CopyTradeAuditEventType;
+    status?: CopyTradeAuditEventDoc["status"];
+    detail: string | null;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  await db.collection<CopyTradeAuditEventDoc>("copy_trade_audit_events").insertOne({
+    userId,
+    leaderTradeId: event.leaderTradeId,
+    action: event.action,
+    leaderSymbol: event.symbol,
+    type: audit.type,
+    status: audit.status,
+    detail: audit.detail,
+    metadata: audit.metadata,
+    createdAt: new Date(),
+  }).catch((error: unknown) => {
+    console.warn(
+      `[CopyTradeAudit] failed to record ${audit.type} for ${event.leaderTradeId}: ${getErrorMessage(error, "audit write failed")}`
+    );
+  });
 }
 
 function readString(value: unknown): string | null {

@@ -182,6 +182,30 @@ export interface CopyTradeLogDoc {
   createdAt: Date;
 }
 
+export type CopyTradeAuditEventType =
+  | "claim.created"
+  | "claim.duplicate"
+  | "claim.reclaimed"
+  | "claim.stale_open_blocked"
+  | "execution.skipped"
+  | "execution.succeeded"
+  | "execution.failed"
+  | "execution.repaired_already_flat"
+  | "log.updated";
+
+export interface CopyTradeAuditEventDoc {
+  _id?: ObjectId;
+  userId: ObjectId;
+  leaderTradeId: string;
+  action: "OPEN" | "CLOSE";
+  leaderSymbol: string;
+  type: CopyTradeAuditEventType;
+  status?: CopyTradeLogStatus | "claimed" | "duplicate" | "reclaimed";
+  detail: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt: Date;
+}
+
 export interface SessionDoc {
   _id?: ObjectId;
   userId: ObjectId;

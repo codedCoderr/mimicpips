@@ -86,6 +86,9 @@ async function ensureIndexes ( database: Db ): Promise<void> {
       database.collection( "marketing_send_logs" ).createIndex( { eventId: 1, createdAt: -1 } ),
       database.collection( "marketing_send_logs" ).createIndex( { userId: 1, createdAt: -1 } ),
       database.collection( "marketing_send_logs" ).createIndex( { campaignKey: 1 }, { unique: true, sparse: true } ),
+      database.collection( "copy_trade_audit_events" ).createIndex( { leaderTradeId: 1, createdAt: 1 } ),
+      database.collection( "copy_trade_audit_events" ).createIndex( { userId: 1, createdAt: -1 } ),
+      database.collection( "copy_trade_audit_events" ).createIndex( { type: 1, createdAt: -1 } ),
       database.collection( "high_water_marks" ).createIndex( { userId: 1 }, { unique: true } ),
       database
         .collection( "performance_fee_invoices" )

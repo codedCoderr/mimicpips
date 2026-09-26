@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, FlaskConical, LayoutDashboard, LogOut, Megaphone, Receipt, Users } from "lucide-react";
+import { BarChart3, FlaskConical, LayoutDashboard, LogOut, Megaphone, Receipt, Route, Users } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import { clearSession } from "@/lib/session";
 
@@ -12,6 +12,7 @@ const navItems = [
   { href: "/dashboard/backtest", label: "Backtest", icon: FlaskConical },
   { href: "/dashboard/followers", label: "Followers", icon: Users },
   { href: "/dashboard/marketing", label: "Marketing", icon: Megaphone },
+  { href: "/dashboard/product", label: "Product", icon: Route },
 ];
 
 interface OperatorHeaderProps {
