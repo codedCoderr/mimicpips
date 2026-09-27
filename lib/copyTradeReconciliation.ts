@@ -51,6 +51,10 @@ function isAlreadyFlatDetail(detail: string | null | undefined): boolean {
   );
 }
 
+function isResolvedStaleOpenDetail(detail: string | null | undefined): boolean {
+  return !!detail?.toLowerCase().includes("reconciliation marked this stale open claim as failed");
+}
+
 function userIdString(log: Pick<CopyTradeLogDoc, "userId">): string | null {
   return log.userId instanceof ObjectId ? log.userId.toString() : null;
 }
@@ -132,7 +136,7 @@ function makeIssue(
 async function writeAudit(
   db: Db,
   log: CopyTradeLogDoc,
-  type: string,
+  type: CopyTradeAuditEventDoc["type"],
   detail: string,
   metadata?: Record<string, unknown>
 ) {
@@ -144,7 +148,7 @@ async function writeAudit(
       leaderTradeId: log.leaderTradeId,
       action: log.action,
       leaderSymbol: log.leaderSymbol,
-      type: type as CopyTradeAuditEventDoc["type"],
+      type,
       status: log.status,
       detail,
       metadata,
@@ -156,7 +160,7 @@ async function writeAudit(
 async function writeAuditOnce(
   db: Db,
   log: CopyTradeLogDoc,
-  type: string,
+  type: CopyTradeAuditEventDoc["type"],
   detail: string,
   metadata: Record<string, unknown>
 ): Promise<boolean> {
@@ -169,7 +173,7 @@ async function writeAuditOnce(
         leaderTradeId: log.leaderTradeId,
         action: log.action,
         leaderSymbol: log.leaderSymbol,
-        type: type as CopyTradeAuditEventDoc["type"],
+        type,
         "metadata.issueType": metadata.issueType,
       },
       {
@@ -178,7 +182,7 @@ async function writeAuditOnce(
           leaderTradeId: log.leaderTradeId,
           action: log.action,
           leaderSymbol: log.leaderSymbol,
-          type: type as CopyTradeAuditEventDoc["type"],
+          type,
           status: log.status,
           detail,
           metadata,
@@ -343,7 +347,7 @@ export async function runCopyTradeReconciliation(options?: {
           });
         }
       }
-    } else if (log.status === "failed") {
+    } else if (log.status === "failed" && !isResolvedStaleOpenDetail(log.detail)) {
       issues.push(
         makeIssue(
           "failed_execution",
@@ -413,7 +417,12 @@ export async function runCopyTradeReconciliation(options?: {
 
   if (applyRepairs) {
     for (const issue of uniqueIssues) {
-      if (issue.type === "stale_processing" || issue.type === "failed_close_retryable") continue;
+      if (
+        issue.type === "failed_close_retryable" ||
+        (issue.type === "stale_processing" && issue.action === "OPEN")
+      ) {
+        continue;
+      }
       const log = logs.find(
         (item) =>
           item.userId instanceof ObjectId &&

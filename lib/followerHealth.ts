@@ -81,11 +81,22 @@ function isAlreadyClosedCopyTradeDetail(detail: string | null | undefined): bool
     lower.includes("no matching follower position is open");
 }
 
+function isResolvedStaleOpenDetail(detail: string | null | undefined): boolean {
+  return !!detail?.toLowerCase().includes("reconciliation marked this stale open claim as failed");
+}
+
+function isActionableSkippedTrade(trade: CopyTradeLogDoc): boolean {
+  return trade.status.startsWith("skipped_") && trade.status !== "skipped_duplicate";
+}
+
 function isUnresolvedCopyTradeIssue(trade: CopyTradeLogDoc): boolean {
   if (trade.status === "failed") {
+    if (trade.action === "OPEN" && isResolvedStaleOpenDetail(trade.detail)) {
+      return false;
+    }
     return !(trade.action === "CLOSE" && isAlreadyClosedCopyTradeDetail(trade.detail));
   }
-  if (trade.status.startsWith("skipped_")) {
+  if (isActionableSkippedTrade(trade)) {
     return trade.action === "OPEN";
   }
   return false;

@@ -165,6 +165,10 @@ function isAlreadyClosedDetail(detail: string | null | undefined): boolean {
     lower.includes("no matching follower position is open");
 }
 
+function isResolvedStaleOpenDetail(detail: string | null | undefined): boolean {
+  return !!detail?.toLowerCase().includes("reconciliation marked this stale open claim as failed");
+}
+
 export async function GET ( req: NextRequest ) {
   const token = req.cookies.get( COOKIE_NAME )?.value;
   let user = null;
@@ -264,12 +268,22 @@ export async function GET ( req: NextRequest ) {
           ? priceBasedClose
           : calculateUnrealizedPnl(e, markPrice);
         const closeResolvedFromPrices = e.action === "CLOSE" && !!priceBasedClose;
-        const effectiveStatus = closeResolvedFromPrices && e.status === "failed"
-          ? "closed"
-          : e.status || "SUCCESS";
-        const effectiveDetail = closeResolvedFromPrices && (e.status === "failed" || isAlreadyClosedDetail(e.detail))
-          ? null
-          : userFacingCopyTradeDetail(e.status || "SUCCESS", e.detail);
+        const staleOpenResolved = e.action === "OPEN" && e.status === "failed" && isResolvedStaleOpenDetail(e.detail);
+        let effectiveStatus: CopyTradeLogStatus | "SUCCESS" = e.status || "SUCCESS";
+        let effectiveDetail = userFacingCopyTradeDetail(e.status || "SUCCESS", e.detail);
+
+        if (closeResolvedFromPrices && e.status === "failed") {
+          effectiveStatus = "closed";
+        }
+        if (staleOpenResolved) {
+          effectiveStatus = "skipped_duplicate";
+        }
+        if (
+          staleOpenResolved ||
+          (closeResolvedFromPrices && (e.status === "failed" || isAlreadyClosedDetail(e.detail)))
+        ) {
+          effectiveDetail = null;
+        }
         return {
           id: e._id!.toString(),
           leaderTradeId: e.leaderTradeId,

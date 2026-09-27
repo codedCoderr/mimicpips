@@ -203,6 +203,7 @@ function GateRowSkeleton () {
 function statusColor ( status: string ): string {
   if ( status === "processing" ) return "var(--warn)";
   if ( status === "executed" || status === "closed" || status === "SUCCESS" ) return "var(--long)";
+  if ( status === "skipped_duplicate" ) return "var(--muted)";
   if ( status === "failed" ) return "var(--short)";
   if ( status.startsWith( "skipped_" ) ) return "var(--warn)";
   return "var(--muted)";

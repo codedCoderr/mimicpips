@@ -63,6 +63,20 @@ function resolvedCloseFailureFilter() {
   };
 }
 
+function resolvedStaleOpenFailureFilter() {
+  return {
+    $and: [
+      { action: "OPEN" },
+      { status: "failed" },
+      {
+        detail: {
+          $regex: /reconciliation marked this stale open claim as failed/i,
+        },
+      },
+    ],
+  };
+}
+
 async function realizedPnlStats(db: Db, since: Date) {
   const result = await db.collection("copy_trade_log").aggregate<{
     totalPnl: number;
@@ -118,10 +132,10 @@ async function recentGateStats(db: Db, since: Date) {
         {
           $or: [
             { status: "failed" },
-            { action: "OPEN", status: { $regex: /^skipped_/ } },
+            { action: "OPEN", status: { $regex: /^skipped_/, $ne: "skipped_duplicate" } },
           ],
         },
-        { $nor: [resolvedCloseFailureFilter()] },
+        { $nor: [resolvedCloseFailureFilter(), resolvedStaleOpenFailureFilter()] },
       ],
     }),
     db.collection("users").countDocuments({ role: "follower", copyTradingEnabled: true }),

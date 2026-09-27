@@ -17,9 +17,13 @@ type ProductIntelligence = {
     copyEvents: number;
     failedEvents: number;
     skippedEvents: number;
+    alreadyHandledEvents?: number;
     repairedCloseCandidates: number;
     unresolvedTradeGroups: Array<{
+      groupKey?: string;
       leaderTradeId: string;
+      userId?: string;
+      followerName?: string | null;
       symbol: string;
       opens: number;
       closes: number;
@@ -164,8 +168,27 @@ function fmtPct(value: number) {
 }
 
 function statusColor(status: ProductStatus | ModuleStatus | string) {
-  if (status === "READY" || status === "HEALTHY") return "var(--long)";
-  if (status === "WATCH" || status === "TODO") return "var(--warn)";
+  const normalized = status.toLowerCase();
+  if (
+    status === "READY" ||
+    status === "HEALTHY" ||
+    normalized === "executed" ||
+    normalized === "closed" ||
+    normalized === "success"
+  ) {
+    return "var(--long)";
+  }
+  if (
+    status === "WATCH" ||
+    status === "TODO" ||
+    normalized === "warning" ||
+    normalized === "watch" ||
+    normalized === "processing" ||
+    (normalized.startsWith("skipped_") && normalized !== "skipped_duplicate")
+  ) {
+    return "var(--warn)";
+  }
+  if (normalized === "info" || normalized === "skipped_duplicate") return "var(--muted)";
   return "var(--short)";
 }
 
@@ -292,9 +315,9 @@ export default function ProductIntelligencePage() {
     );
   }, [data]);
 
-  async function inspectTrade(leaderTradeId: string, target: SelectedAuditTarget = null) {
+  async function inspectTrade(leaderTradeId: string, target: SelectedAuditTarget = null, loadingKey = leaderTradeId) {
     setSelectedAuditTarget(target);
-    setAuditLoading(leaderTradeId);
+    setAuditLoading(loadingKey);
     setAuditError(null);
     try {
       const res = await fetch(
@@ -408,7 +431,7 @@ export default function ProductIntelligencePage() {
                   <Metric
                     label="Execution integrity"
                     value={`${data.executionIntegrity.score}/100`}
-                    sub={`${data.executionIntegrity.failedEvents} failed, ${data.executionIntegrity.skippedEvents} skipped`}
+                    sub={`${data.executionIntegrity.failedEvents} failed, ${data.executionIntegrity.skippedEvents} skipped, ${data.executionIntegrity.alreadyHandledEvents ?? 0} handled`}
                     color={statusColor(data.executionIntegrity.score >= 85 ? "READY" : "BLOCKED")}
                   />
                   <Metric
@@ -448,48 +471,61 @@ export default function ProductIntelligencePage() {
                 </div>
               </section>
 
-              <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <section className="grid grid-cols-1 2xl:grid-cols-[minmax(820px,1.15fr)_minmax(420px,0.85fr)] gap-6">
                 <div className="panel">
                   <div className="p-4 border-b border-[var(--hairline)]">
                     <span className="eyebrow">Execution lifecycle gaps</span>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs font-mono">
+                    <table className="w-full min-w-[860px] table-fixed text-left text-xs font-mono">
+                      <colgroup>
+                        <col className="w-[132px]" />
+                        <col className="w-[190px]" />
+                        <col className="w-[72px]" />
+                        <col className="w-[72px]" />
+                        <col className="w-[78px]" />
+                        <col />
+                        <col className="w-[108px]" />
+                      </colgroup>
                       <thead className="text-[10px] text-[var(--muted)] uppercase">
                         <tr>
-                          <th className="px-4 py-2">Symbol</th>
-                          <th className="px-4 py-2 text-right">Open</th>
-                          <th className="px-4 py-2 text-right">Close</th>
-                          <th className="px-4 py-2 text-right">Failed</th>
-                          <th className="px-4 py-2">Last</th>
-                          <th className="px-4 py-2 text-right">Audit</th>
+                          <th className="px-3 py-2">Symbol</th>
+                          <th className="px-3 py-2">Follower</th>
+                          <th className="px-3 py-2 text-right">Open</th>
+                          <th className="px-3 py-2 text-right">Close</th>
+                          <th className="px-3 py-2 text-right">Failed</th>
+                          <th className="px-3 py-2">Last</th>
+                          <th className="px-3 py-2 text-right">Audit</th>
                         </tr>
                       </thead>
                       <tbody>
                         {data.executionIntegrity.unresolvedTradeGroups.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="px-4 py-6 text-center text-[var(--muted)]">
+                            <td colSpan={7} className="px-4 py-6 text-center text-[var(--muted)]">
                               No unresolved lifecycle groups.
                             </td>
                           </tr>
                         ) : (
                           data.executionIntegrity.unresolvedTradeGroups.map((group) => (
-                            <tr key={group.leaderTradeId} className="border-t border-[var(--hairline)]">
-                              <td className="px-4 py-2 font-semibold text-[var(--text)]">{group.symbol}</td>
-                              <td className="px-4 py-2 text-right tabular">{group.opens}</td>
-                              <td className="px-4 py-2 text-right tabular">{group.closes}</td>
-                              <td className="px-4 py-2 text-right tabular text-[var(--short)]">{group.failed}</td>
-                              <td className="px-4 py-2 text-[var(--muted)] max-w-[220px] truncate">
+                            <tr key={group.groupKey ?? group.leaderTradeId} className="border-t border-[var(--hairline)]">
+                              <td className="px-3 py-2 font-semibold text-[var(--text)] truncate">{group.symbol}</td>
+                              <td className="px-3 py-2 text-[var(--muted)] truncate">
+                                {group.followerName ?? group.userId ?? "Unknown"}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular">{group.opens}</td>
+                              <td className="px-3 py-2 text-right tabular">{group.closes}</td>
+                              <td className="px-3 py-2 text-right tabular text-[var(--short)]">{group.failed}</td>
+                              <td className="px-3 py-2 text-[var(--muted)] truncate">
                                 {group.lastDetail ?? group.lastStatus}
                               </td>
-                              <td className="px-4 py-2 text-right">
+                              <td className="px-3 py-2 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => void inspectTrade(group.leaderTradeId, { source: "lifecycle", group })}
-                                  disabled={auditLoading === group.leaderTradeId}
-                                  className="font-mono text-[10px] border border-[var(--hairline-bright)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--long-dim)] disabled:opacity-50"
+                                  onClick={() => void inspectTrade(group.leaderTradeId, { source: "lifecycle", group }, group.groupKey ?? group.leaderTradeId)}
+                                  disabled={auditLoading === (group.groupKey ?? group.leaderTradeId)}
+                                  className="whitespace-nowrap font-mono text-[10px] border border-[var(--hairline-bright)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--long-dim)] disabled:opacity-50"
                                 >
-                                  {auditLoading === group.leaderTradeId ? "Loading" : "Inspect"}
+                                  {auditLoading === (group.groupKey ?? group.leaderTradeId) ? "Loading" : "Inspect"}
                                 </button>
                               </td>
                             </tr>
@@ -626,36 +662,44 @@ export default function ProductIntelligencePage() {
                       </p>
                     ) : (
                       <div className="overflow-x-auto border border-[var(--hairline)]">
-                        <table className="w-full text-left text-xs font-mono">
+                        <table className="w-full min-w-[920px] table-fixed text-left text-xs font-mono">
+                          <colgroup>
+                            <col className="w-[150px]" />
+                            <col className="w-[140px]" />
+                            <col className="w-[82px]" />
+                            <col className="w-[118px]" />
+                            <col />
+                            <col className="w-[108px]" />
+                          </colgroup>
                           <thead className="text-[10px] uppercase text-[var(--muted)] bg-[var(--panel-raised)]">
                             <tr>
-                              <th className="px-4 py-2">Issue</th>
-                              <th className="px-4 py-2">Symbol</th>
-                              <th className="px-4 py-2">Action</th>
-                              <th className="px-4 py-2">Status</th>
-                              <th className="px-4 py-2">Recommendation</th>
-                              <th className="px-4 py-2 text-right">Audit</th>
+                              <th className="px-3 py-2">Issue</th>
+                              <th className="px-3 py-2">Symbol</th>
+                              <th className="px-3 py-2">Action</th>
+                              <th className="px-3 py-2">Status</th>
+                              <th className="px-3 py-2">Recommendation</th>
+                              <th className="px-3 py-2 text-right">Audit</th>
                             </tr>
                           </thead>
                           <tbody>
                             {reconciliation.issues.slice(0, 12).map((issue) => (
                               <tr key={`${issue.type}-${issue.userId}-${issue.leaderTradeId}-${issue.action}`} className="border-t border-[var(--hairline)]">
-                                <td className="px-4 py-2">
+                                <td className="px-3 py-2">
                                   <StatusPill status={issue.severity.toUpperCase()} />
-                                  <div className="mt-1 text-[var(--muted)]">{issue.type.replace(/_/g, " ")}</div>
+                                  <div className="mt-1 text-[var(--muted)] truncate">{issue.type.replace(/_/g, " ")}</div>
                                 </td>
-                                <td className="px-4 py-2 font-semibold text-[var(--text)]">{issue.symbol}</td>
-                                <td className="px-4 py-2">{issue.action}</td>
-                                <td className="px-4 py-2">{issue.status}</td>
-                                <td className="px-4 py-2 text-[var(--muted-dim)] max-w-[360px]">
+                                <td className="px-3 py-2 font-semibold text-[var(--text)] truncate">{issue.symbol}</td>
+                                <td className="px-3 py-2">{issue.action}</td>
+                                <td className="px-3 py-2 truncate">{issue.status}</td>
+                                <td className="px-3 py-2 text-[var(--muted-dim)]">
                                   {issue.recommendation}
                                 </td>
-                                <td className="px-4 py-2 text-right">
+                                <td className="px-3 py-2 text-right">
                                   <button
                                     type="button"
                                     onClick={() => void inspectTrade(issue.leaderTradeId, { source: "issue", issue })}
                                     disabled={auditLoading === issue.leaderTradeId}
-                                    className="font-mono text-[10px] border border-[var(--hairline-bright)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--long-dim)] disabled:opacity-50"
+                                    className="whitespace-nowrap font-mono text-[10px] border border-[var(--hairline-bright)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--long-dim)] disabled:opacity-50"
                                   >
                                     {auditLoading === issue.leaderTradeId ? "Loading" : "Inspect"}
                                   </button>
@@ -718,8 +762,8 @@ export default function ProductIntelligencePage() {
                   </p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
-                    {data.recentMarketingEvents.map((event) => (
-                      <div key={event.id} className="border border-[var(--hairline)] bg-[var(--panel-raised)] p-3">
+                    {data.recentMarketingEvents.map((event, index) => (
+                      <div key={`${event.id}-${event.createdAt}-${index}`} className="border border-[var(--hairline)] bg-[var(--panel-raised)] p-3">
                         <div className="flex items-center justify-between gap-3">
                           <span className="eyebrow">{event.type.replace(/_/g, " ")}</span>
                           <span className="font-mono text-[10px] text-[var(--muted)]">
@@ -797,7 +841,7 @@ function AuditTimelinePanel({
     selectedTarget?.source === "issue"
       ? `${selectedTarget.issue.symbol} ${selectedTarget.issue.action} • ${selectedTarget.issue.type.replace(/_/g, " ")}`
       : selectedTarget?.source === "lifecycle"
-      ? `${selectedTarget.group.symbol} • lifecycle gap • ${selectedTarget.group.lastDetail ?? selectedTarget.group.lastStatus}`
+      ? `${selectedTarget.group.symbol}${selectedTarget.group.followerName ? ` • ${selectedTarget.group.followerName}` : ""} • lifecycle gap • ${selectedTarget.group.lastDetail ?? selectedTarget.group.lastStatus}`
       : null;
   const followerRows = audit
     ? [...audit.followers].sort((a, b) => (
@@ -875,9 +919,9 @@ function AuditTimelinePanel({
                   No audit events recorded yet. New copy-trade events will populate this trail.
                 </p>
               ) : (
-                eventRows.map((event) => (
+                eventRows.map((event, index) => (
                   <div
-                    key={event.id}
+                    key={event.id ?? `${event.userId}-${event.type}-${event.createdAt}-${index}`}
                     className="grid grid-cols-[88px_1fr] gap-3 border-l border-[var(--hairline-bright)] pl-3 py-2"
                   >
                     <span className="font-mono text-[10px] text-[var(--muted)]">

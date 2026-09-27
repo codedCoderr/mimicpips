@@ -15,6 +15,10 @@ interface BrokerEnvelope {
   data?: unknown;
 }
 
+function isActionableIssue(status: string): boolean {
+  return status === "failed" || (status.startsWith("skipped_") && status !== "skipped_duplicate");
+}
+
 export function initCopyTradeSubscriber(): void {
   if (globalForCopyTradeSubscriber.copyTradeSubscriberStarted) return;
   if (process.env.COPY_TRADE_WORKER_ENABLED !== "true") return;
@@ -114,14 +118,20 @@ async function handleSseChunk(chunk: string): Promise<void> {
 
   const results = await executeCopyTradeFanOut(tradeEvent);
   const executed = results.filter((result) => result.status === "executed" || result.status === "closed").length;
+  const skipped = results.filter((result) => result.status.startsWith("skipped_") && result.status !== "skipped_duplicate").length;
+  const alreadyHandled = results.filter((result) => result.status === "skipped_duplicate").length;
   const failed = results.filter((result) => result.status === "failed").length;
   if (tradeEvent.action === "OPEN" && !hasStopLossProtection(tradeEvent)) {
     console.warn(
       `[CopyTrade] ${tradeEvent.action} ${tradeEvent.symbol}: bot payload did not include stopLossPrice/stopLoss/atrStopLoss. Follower dashboard will show stop data as pending.`
     );
   }
+  const firstIssue = results.find((result) => isActionableIssue(result.status));
+  if (firstIssue?.detail) {
+    console.log(`[CopyTrade] first actionable issue: ${firstIssue.status} - ${firstIssue.detail}`);
+  }
   console.log(
-    `[CopyTrade] ${tradeEvent.action} ${tradeEvent.symbol}: ${executed} executed, ${failed} failed, ${results.length} total.`
+    `[CopyTrade] ${tradeEvent.action} ${tradeEvent.symbol}: ${executed} executed, ${skipped} skipped, ${alreadyHandled} already handled, ${failed} failed, ${results.length} total.`
   );
 }
 

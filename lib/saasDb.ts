@@ -89,6 +89,14 @@ async function ensureIndexes ( database: Db ): Promise<void> {
       database.collection( "copy_trade_audit_events" ).createIndex( { leaderTradeId: 1, createdAt: 1 } ),
       database.collection( "copy_trade_audit_events" ).createIndex( { userId: 1, createdAt: -1 } ),
       database.collection( "copy_trade_audit_events" ).createIndex( { type: 1, createdAt: -1 } ),
+      database.collection( "copy_trade_audit_events" ).createIndex( {
+        userId: 1,
+        leaderTradeId: 1,
+        action: 1,
+        leaderSymbol: 1,
+        type: 1,
+        "metadata.issueType": 1,
+      } ),
       database.collection( "high_water_marks" ).createIndex( { userId: 1 }, { unique: true } ),
       database
         .collection( "performance_fee_invoices" )

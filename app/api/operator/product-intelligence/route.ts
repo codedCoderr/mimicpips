@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Document } from "mongodb";
+import { ObjectId, type Document } from "mongodb";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 import { getBotDb, getSaasDb } from "@/lib/saasDb";
 import { calculateFollowerHealth } from "@/lib/followerHealth";
@@ -46,9 +46,26 @@ function safeAction(log: Pick<CopyTradeLogDoc, "action">): "OPEN" | "CLOSE" | "U
   return log.action === "OPEN" || log.action === "CLOSE" ? log.action : "UNKNOWN";
 }
 
+function userIdKey(log: Pick<CopyTradeLogDoc, "userId">): string {
+  return log.userId instanceof ObjectId ? log.userId.toString() : "unknown";
+}
+
+function isActionableSkip(log: CopyTradeLogDoc): boolean {
+  const status = safeStatus(log);
+  return status.startsWith("skipped_") && status !== "skipped_duplicate";
+}
+
 function closeReason(doc: Document): string {
   const reason = String(doc.closeReason ?? doc.reason ?? doc.exitReason ?? "UNKNOWN");
   return reason.toUpperCase().replace(/\s+/g, "_");
+}
+
+function isResolvedStaleOpenFailure(log: CopyTradeLogDoc): boolean {
+  return (
+    safeAction(log) === "OPEN" &&
+    safeStatus(log) === "failed" &&
+    !!log.detail?.toLowerCase().includes("reconciliation marked this stale open claim as failed")
+  );
 }
 
 function leaderTradeKeys(doc: Document): string[] {
@@ -123,38 +140,47 @@ export async function GET(req: NextRequest) {
     ["anxious", "likely_to_churn"].includes(item.band)
   );
 
+  const followerNameById = new Map(
+    followers
+      .filter((user) => user._id)
+      .map((user) => [user._id!.toString(), user.displayName || user.email])
+  );
   const logsByTrade = new Map<string, CopyTradeLogDoc[]>();
   for (const log of copyLogs) {
-    const key = log.leaderTradeId || "unknown";
+    const key = `${userIdKey(log)}:${log.leaderTradeId || "unknown"}`;
     logsByTrade.set(key, [...(logsByTrade.get(key) ?? []), log]);
   }
   const closedLeaderTradeIds = new Set(leaderTrades.flatMap(leaderTradeKeys));
+  const closeLogsNeedingOpenCheck = copyLogs.filter((log) => safeAction(log) === "CLOSE" && log.leaderTradeId);
   const closeLeaderTradeIds = Array.from(
     new Set(
-      copyLogs
-        .filter((log) => safeAction(log) === "CLOSE" && log.leaderTradeId)
-        .map((log) => log.leaderTradeId)
+      closeLogsNeedingOpenCheck.map((log) => log.leaderTradeId)
     )
   );
-  const historicalOpenTradeIds = new Set<string>();
+  const closeUserIds = Array.from(
+    new Set(closeLogsNeedingOpenCheck.map(userIdKey).filter((id) => id !== "unknown"))
+  ).map((id) => new ObjectId(id));
+  const historicalOpenKeys = new Set<string>();
   if (closeLeaderTradeIds.length > 0) {
     const historicalOpens = await saasDb
       .collection<CopyTradeLogDoc>("copy_trade_log")
       .find({
+        ...(closeUserIds.length > 0 ? { userId: { $in: closeUserIds } } : {}),
         leaderTradeId: { $in: closeLeaderTradeIds },
         action: "OPEN",
       })
-      .project({ leaderTradeId: 1 })
+      .project({ userId: 1, leaderTradeId: 1 })
       .toArray();
     for (const open of historicalOpens) {
-      if (typeof open.leaderTradeId === "string" && open.leaderTradeId.trim()) {
-        historicalOpenTradeIds.add(open.leaderTradeId);
+      if (open.userId instanceof ObjectId && typeof open.leaderTradeId === "string" && open.leaderTradeId.trim()) {
+        historicalOpenKeys.add(`${open.userId.toString()}:${open.leaderTradeId}`);
       }
     }
   }
 
-  const failedLogs = copyLogs.filter((log) => safeStatus(log) === "failed");
-  const skippedLogs = copyLogs.filter((log) => safeStatus(log).startsWith("skipped_"));
+  const failedLogs = copyLogs.filter((log) => safeStatus(log) === "failed" && !isResolvedStaleOpenFailure(log));
+  const skippedLogs = copyLogs.filter(isActionableSkip);
+  const alreadyHandledLogs = copyLogs.filter((log) => safeStatus(log) === "skipped_duplicate");
   const closeLogs = copyLogs.filter((log) => safeAction(log) === "CLOSE");
   const repairedCloseCandidates = closeLogs.filter((log) => {
     const detail = log.detail?.toLowerCase() ?? "";
@@ -167,21 +193,27 @@ export async function GET(req: NextRequest) {
   });
 
   const unresolvedTradeGroups = Array.from(logsByTrade.entries())
-    .map(([leaderTradeId, logs]) => {
+    .map(([groupKey, logs]) => {
+      const firstLog = logs[0];
+      const leaderTradeId = firstLog?.leaderTradeId || groupKey.split(":").slice(1).join(":") || "unknown";
+      const userId = firstLog ? userIdKey(firstLog) : "unknown";
       const opens = logs.filter((log) => safeAction(log) === "OPEN");
       const closes = logs.filter((log) => safeAction(log) === "CLOSE");
-      const failed = logs.filter((log) => safeStatus(log) === "failed");
-      const skipped = logs.filter((log) => safeStatus(log).startsWith("skipped_"));
+      const failed = logs.filter((log) => safeStatus(log) === "failed" && !isResolvedStaleOpenFailure(log));
+      const skipped = logs.filter(isActionableSkip);
       return {
+        groupKey,
         leaderTradeId,
-        symbol: cleanSymbol(logs[0]?.leaderSymbol),
+        userId,
+        followerName: followerNameById.get(userId) ?? null,
+        symbol: cleanSymbol(firstLog?.leaderSymbol),
         opens: opens.length,
         closes: closes.length,
         failed: failed.length,
         skipped: skipped.length,
-        hasHistoricalOpen: historicalOpenTradeIds.has(leaderTradeId),
-        lastStatus: logs[0] ? safeStatus(logs[0]) : "unknown",
-        lastDetail: logs[0]?.detail ?? null,
+        hasHistoricalOpen: historicalOpenKeys.has(`${userId}:${leaderTradeId}`),
+        lastStatus: firstLog ? safeStatus(firstLog) : "unknown",
+        lastDetail: firstLog?.detail ?? null,
       };
     })
     .filter((group) => (
@@ -286,6 +318,7 @@ export async function GET(req: NextRequest) {
       copyEvents: copyLogs.length,
       failedEvents: failedLogs.length,
       skippedEvents: skippedLogs.length,
+      alreadyHandledEvents: alreadyHandledLogs.length,
       repairedCloseCandidates: repairedCloseCandidates.length,
       unresolvedTradeGroups,
     },
