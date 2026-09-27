@@ -221,21 +221,26 @@ export default function ProductIntelligencePage() {
   const [selectedAuditTarget, setSelectedAuditTarget] = useState<SelectedAuditTarget>(null);
   const auditSectionRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(() => {
+  const load = useCallback((options?: { preserveReconciliation?: boolean }) => {
     setLoading(true);
+    const shouldPreserveReconciliation = options?.preserveReconciliation ?? false;
     Promise.all([
       fetch(`/api/operator/product-intelligence?days=${days}`, { cache: "no-store" }),
-      fetch(`/api/operator/copy-trade-reconciliation?days=${Math.min(days, 90)}`, { cache: "no-store" }),
+      shouldPreserveReconciliation
+        ? Promise.resolve(null)
+        : fetch(`/api/operator/copy-trade-reconciliation?days=${Math.min(days, 90)}`, { cache: "no-store" }),
     ])
       .then(async ([productRes, reconRes]) => {
         const productBody = await productRes.json().catch(() => null);
         if (!productRes.ok) throw new Error(productBody?.error ?? "Could not load product intelligence.");
 
-        const reconBody = await reconRes.json().catch(() => null);
-        if (!reconRes.ok) throw new Error(reconBody?.error ?? "Could not load reconciliation report.");
+        const reconBody = reconRes ? await reconRes.json().catch(() => null) : null;
+        if (reconRes && !reconRes.ok) throw new Error(reconBody?.error ?? "Could not load reconciliation report.");
 
         setData(productBody as ProductIntelligence);
-        setReconciliation(reconBody as ReconciliationReport);
+        if (reconBody) {
+          setReconciliation(reconBody as ReconciliationReport);
+        }
         setError(null);
         setReconError(null);
       })
@@ -266,7 +271,7 @@ export default function ProductIntelligencePage() {
           ? `No safe data repairs were applied. ${audited} issue(s) were audit-marked for manual review because changing them automatically could invent fills or PnL.`
           : "Reconciliation ran. No safe automatic repairs were available for the current issues."
       );
-      load();
+      load({ preserveReconciliation: true });
     } catch (err) {
       setReconError(err instanceof Error ? err.message : "Could not run reconciliation.");
     } finally {

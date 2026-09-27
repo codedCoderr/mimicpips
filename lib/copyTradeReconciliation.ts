@@ -1,9 +1,10 @@
-import { ObjectId, type Db } from "mongodb";
-import { getSaasDb } from "@/lib/saasDb";
+import { ObjectId, type Db, type Document } from "mongodb";
+import { getBotDb, getSaasDb } from "@/lib/saasDb";
 import type { CopyTradeAuditEventDoc, CopyTradeLogDoc } from "@/lib/saasTypes";
 
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const BOT_TRADES_COLLECTION = "futures_history";
 
 export type ReconciliationIssueType =
   | "stale_processing"
@@ -67,6 +68,46 @@ function sameUserId(a: unknown, b: unknown): boolean {
   return a instanceof ObjectId && b instanceof ObjectId && a.equals(b);
 }
 
+function readLeaderTradeKeys(doc: Document): string[] {
+  return [doc._id?.toString(), doc.tradeId, doc.leaderTradeId, doc.id]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+}
+
+async function loadClosedLeaderTradeIds(tradeIds: string[], since: Date): Promise<Set<string>> {
+  if (tradeIds.length === 0) return new Set();
+  const botDb = await getBotDb().catch(() => null);
+  if (!botDb) return new Set();
+  const objectTradeIds = tradeIds
+    .filter((id) => ObjectId.isValid(id))
+    .map((id) => new ObjectId(id));
+
+  const docs = await botDb
+    .collection<Document>(BOT_TRADES_COLLECTION)
+    .find({
+      status: { $in: ["CLOSED", "closed"] },
+      $or: [
+        { tradeId: { $in: tradeIds } },
+        { leaderTradeId: { $in: tradeIds } },
+        { id: { $in: tradeIds } },
+        ...(objectTradeIds.length > 0 ? [{ _id: { $in: objectTradeIds } }] : []),
+        { closedAt: { $gte: since } },
+        { exitTime: { $gte: since } },
+      ],
+    })
+    .limit(1000)
+    .toArray()
+    .catch(() => []);
+
+  const closed = new Set<string>();
+  for (const doc of docs) {
+    for (const key of readLeaderTradeKeys(doc)) {
+      if (tradeIds.includes(key)) closed.add(key);
+    }
+  }
+  return closed;
+}
+
 function makeIssue(
   type: ReconciliationIssueType,
   log: CopyTradeLogDoc,
@@ -112,6 +153,45 @@ async function writeAudit(
     .catch(() => undefined);
 }
 
+async function writeAuditOnce(
+  db: Db,
+  log: CopyTradeLogDoc,
+  type: string,
+  detail: string,
+  metadata: Record<string, unknown>
+): Promise<boolean> {
+  if (!(log.userId instanceof ObjectId)) return false;
+  const result = await db
+    .collection<CopyTradeAuditEventDoc>("copy_trade_audit_events")
+    .updateOne(
+      {
+        userId: log.userId,
+        leaderTradeId: log.leaderTradeId,
+        action: log.action,
+        leaderSymbol: log.leaderSymbol,
+        type: type as CopyTradeAuditEventDoc["type"],
+        "metadata.issueType": metadata.issueType,
+      },
+      {
+        $setOnInsert: {
+          userId: log.userId,
+          leaderTradeId: log.leaderTradeId,
+          action: log.action,
+          leaderSymbol: log.leaderSymbol,
+          type: type as CopyTradeAuditEventDoc["type"],
+          status: log.status,
+          detail,
+          metadata,
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true }
+    )
+    .catch(() => null);
+
+  return !!result?.upsertedCount;
+}
+
 export async function runCopyTradeReconciliation(options?: {
   days?: number;
   applyRepairs?: boolean;
@@ -137,6 +217,39 @@ export async function runCopyTradeReconciliation(options?: {
   ));
 
   const byUserAndTrade = new Map<string, CopyTradeLogDoc[]>();
+  const leaderTradeIds = Array.from(
+    new Set(validLogs.map((log) => log.leaderTradeId).filter(Boolean))
+  );
+  const closedLeaderTradeIds = await loadClosedLeaderTradeIds(leaderTradeIds, since);
+  const closeLogsNeedingOpenCheck = validLogs.filter((log) => log.action === "CLOSE");
+  const historicalOpenKeys = new Set<string>();
+  if (closeLogsNeedingOpenCheck.length > 0) {
+    const closeUserIds = Array.from(
+      new Set(
+        closeLogsNeedingOpenCheck
+          .map((log) => log.userId)
+          .filter((userId): userId is ObjectId => userId instanceof ObjectId)
+          .map((userId) => userId.toString())
+      )
+    ).map((userId) => new ObjectId(userId));
+    const closeLeaderTradeIds = Array.from(
+      new Set(closeLogsNeedingOpenCheck.map((log) => log.leaderTradeId))
+    );
+    const historicalOpens = await db
+      .collection<CopyTradeLogDoc>("copy_trade_log")
+      .find({
+        userId: { $in: closeUserIds },
+        leaderTradeId: { $in: closeLeaderTradeIds },
+        action: "OPEN",
+      })
+      .project({ userId: 1, leaderTradeId: 1 })
+      .toArray();
+    for (const open of historicalOpens) {
+      if (open.userId instanceof ObjectId && open.leaderTradeId) {
+        historicalOpenKeys.add(`${open.userId.toString()}:${open.leaderTradeId}`);
+      }
+    }
+  }
   for (const log of validLogs) {
     const key = `${log.userId.toString()}:${log.leaderTradeId}`;
     byUserAndTrade.set(key, [...(byUserAndTrade.get(key) ?? []), log]);
@@ -248,7 +361,7 @@ export async function runCopyTradeReconciliation(options?: {
     const executedOpen = opens.find((log) => log.status === "executed" || log.status === "processing");
     const closed = closes.find((log) => log.status === "closed" || log.status === "processing");
 
-    if (executedOpen && !closed) {
+    if (executedOpen && !closed && closedLeaderTradeIds.has(executedOpen.leaderTradeId)) {
       issues.push(
         makeIssue(
           "open_without_close",
@@ -259,7 +372,13 @@ export async function runCopyTradeReconciliation(options?: {
       );
     }
 
-    const closeWithoutOpen = closes.find((log) => !opens.some((open) => sameUserId(open.userId, log.userId)));
+    const closeWithoutOpen = closes.find((log) => {
+      const hasWindowOpen = opens.some((open) => sameUserId(open.userId, log.userId));
+      const hasHistoricalOpen =
+        log.userId instanceof ObjectId &&
+        historicalOpenKeys.has(`${log.userId.toString()}:${log.leaderTradeId}`);
+      return !hasWindowOpen && !hasHistoricalOpen;
+    });
     if (closeWithoutOpen) {
       issues.push(
         makeIssue(
@@ -304,17 +423,19 @@ export async function runCopyTradeReconciliation(options?: {
           item.action === issue.action
       );
       if (!log) continue;
-      await writeAudit(db, log, "reconciliation.issue_detected", issue.recommendation, {
+      const inserted = await writeAuditOnce(db, log, "reconciliation.issue_detected", issue.recommendation, {
         issueType: issue.type,
         severity: issue.severity,
       });
-      automatedActions.push({
-        issue: issue.type,
-        leaderTradeId: issue.leaderTradeId,
-        userId: issue.userId,
-        outcome: "audit_recorded",
-        detail: issue.recommendation,
-      });
+      if (inserted) {
+        automatedActions.push({
+          issue: issue.type,
+          leaderTradeId: issue.leaderTradeId,
+          userId: issue.userId,
+          outcome: "audit_recorded",
+          detail: issue.recommendation,
+        });
+      }
     }
   }
 

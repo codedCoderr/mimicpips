@@ -316,8 +316,8 @@ export function PropFirmRiskPanel({
   const derivedExitLeaks = buildBuckets(recentTrades, (trade) =>
     trade.closeReason || "Unknown"
   )
-    .filter((row) => row.pnl < 0 || row.trades > 1)
-    .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
+    .filter((row) => row.pnl < 0)
+    .sort((a, b) => a.pnl - b.pnl);
   const bestSymbols =
     telemetry.bestSymbols.length > 0 ? telemetry.bestSymbols : derivedBestSymbols;
   const worstSymbols =
@@ -341,6 +341,7 @@ export function PropFirmRiskPanel({
             ? null
             : performanceSummary.profitFactor,
       };
+  const hasWindowTrades = windowStats.trades > 0;
   const alerts = risk.alerts ?? [];
   const recommendations = risk.recommendations ?? [];
   const windowDays = num(risk.windowDays, 30);
@@ -566,11 +567,15 @@ export function PropFirmRiskPanel({
         <div className='grid grid-cols-2 lg:grid-cols-5 gap-px bg-[var(--hairline)]'>
           <Metric
             label='Window win rate'
-            value={fmtPct(windowStats.winRate)}
-            sub={`${windowStats.trades} closed trades${
-              hasSnapshotTelemetry ? "" : " from performance summary"
-            }`}
-            tone={windowStats.winRate >= 50 ? "long" : "short"}
+            value={hasWindowTrades ? fmtPct(windowStats.winRate) : "-"}
+            sub={`${windowStats.trades} closed trades`}
+            tone={
+              !hasWindowTrades
+                ? "neutral"
+                : windowStats.winRate >= 50
+                ? "long"
+                : "short"
+            }
           />
           <Metric
             label='Window net PnL'
@@ -593,7 +598,13 @@ export function PropFirmRiskPanel({
                 ? `Worst loss ${fmtUsd(windowStats.maxClosedTradeLoss)}`
                 : "Worst loss needs risk telemetry"
             }
-            tone={(windowStats.profitFactor ?? 0) >= 1 ? "long" : "short"}
+            tone={
+              windowStats.profitFactor === null
+                ? "neutral"
+                : windowStats.profitFactor >= 1
+                ? "long"
+                : "short"
+            }
           />
         </div>
 
@@ -633,7 +644,7 @@ export function PropFirmRiskPanel({
           empty={
             hasSnapshotTelemetry
               ? "No session data in this window."
-              : "Waiting for session telemetry from the bot snapshot."
+              : "Session tags are not available for these trades yet."
           }
         />
       </div>

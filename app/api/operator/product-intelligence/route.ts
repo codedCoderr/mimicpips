@@ -51,6 +51,12 @@ function closeReason(doc: Document): string {
   return reason.toUpperCase().replace(/\s+/g, "_");
 }
 
+function leaderTradeKeys(doc: Document): string[] {
+  return [doc._id?.toString(), doc.tradeId, doc.leaderTradeId, doc.id]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+}
+
 export async function GET(req: NextRequest) {
   if (!(await requireOperator(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -122,6 +128,30 @@ export async function GET(req: NextRequest) {
     const key = log.leaderTradeId || "unknown";
     logsByTrade.set(key, [...(logsByTrade.get(key) ?? []), log]);
   }
+  const closedLeaderTradeIds = new Set(leaderTrades.flatMap(leaderTradeKeys));
+  const closeLeaderTradeIds = Array.from(
+    new Set(
+      copyLogs
+        .filter((log) => safeAction(log) === "CLOSE" && log.leaderTradeId)
+        .map((log) => log.leaderTradeId)
+    )
+  );
+  const historicalOpenTradeIds = new Set<string>();
+  if (closeLeaderTradeIds.length > 0) {
+    const historicalOpens = await saasDb
+      .collection<CopyTradeLogDoc>("copy_trade_log")
+      .find({
+        leaderTradeId: { $in: closeLeaderTradeIds },
+        action: "OPEN",
+      })
+      .project({ leaderTradeId: 1 })
+      .toArray();
+    for (const open of historicalOpens) {
+      if (typeof open.leaderTradeId === "string" && open.leaderTradeId.trim()) {
+        historicalOpenTradeIds.add(open.leaderTradeId);
+      }
+    }
+  }
 
   const failedLogs = copyLogs.filter((log) => safeStatus(log) === "failed");
   const skippedLogs = copyLogs.filter((log) => safeStatus(log).startsWith("skipped_"));
@@ -149,11 +179,18 @@ export async function GET(req: NextRequest) {
         closes: closes.length,
         failed: failed.length,
         skipped: skipped.length,
+        hasHistoricalOpen: historicalOpenTradeIds.has(leaderTradeId),
         lastStatus: logs[0] ? safeStatus(logs[0]) : "unknown",
         lastDetail: logs[0]?.detail ?? null,
       };
     })
-    .filter((group) => group.failed > 0 || group.skipped > 0 || group.opens !== group.closes)
+    .filter((group) => (
+      group.failed > 0 ||
+      group.skipped > 0 ||
+      (closedLeaderTradeIds.has(group.leaderTradeId) &&
+        group.opens !== group.closes &&
+        !(group.opens === 0 && group.closes > 0 && group.hasHistoricalOpen))
+    ))
     .slice(0, 12);
 
   const symbolStats = new Map<
@@ -193,6 +230,7 @@ export async function GET(req: NextRequest) {
     .slice(0, 10);
 
   const exitLeaks = Array.from(exitStats.values())
+    .filter((row) => row.pnl < 0 && row.trades > 1)
     .sort((a, b) => a.pnl - b.pnl)
     .slice(0, 8);
 
