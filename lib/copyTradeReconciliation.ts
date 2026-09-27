@@ -35,7 +35,7 @@ export interface CopyTradeReconciliationReport {
     issue: ReconciliationIssueType;
     leaderTradeId: string;
     userId: string;
-    outcome: "marked_failed" | "audit_recorded" | "skipped";
+    outcome: "marked_failed" | "marked_closed" | "audit_recorded" | "skipped";
     detail: string;
   }>;
 }
@@ -202,6 +202,34 @@ export async function runCopyTradeReconciliation(options?: {
           "watch"
         )
       );
+      if (applyRepairs && log._id) {
+        const result = await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
+          { _id: log._id, status: "failed", action: "CLOSE" },
+          {
+            $set: {
+              status: "closed",
+              detail: "Reconciliation marked this close as resolved because the follower was already flat.",
+              executedAt: now,
+            },
+          }
+        );
+        if (result.modifiedCount > 0) {
+          await writeAudit(
+            db,
+            { ...log, status: "closed" },
+            "reconciliation.already_flat_marked_closed",
+            "Failed CLOSE row marked closed because the follower was already flat.",
+            { previousDetail: log.detail }
+          );
+          automatedActions.push({
+            issue: "failed_close_retryable",
+            leaderTradeId: log.leaderTradeId,
+            userId: log.userId.toString(),
+            outcome: "marked_closed",
+            detail: "Failed CLOSE row marked closed because the follower was already flat.",
+          });
+        }
+      }
     } else if (log.status === "failed") {
       issues.push(
         makeIssue(
@@ -266,7 +294,7 @@ export async function runCopyTradeReconciliation(options?: {
 
   if (applyRepairs) {
     for (const issue of uniqueIssues) {
-      if (issue.type === "stale_processing") continue;
+      if (issue.type === "stale_processing" || issue.type === "failed_close_retryable") continue;
       const log = logs.find(
         (item) =>
           item.userId instanceof ObjectId &&

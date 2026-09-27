@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import type {
+  PerformanceSummary,
   PropFirmRiskDashboard,
   PropFirmTelemetryBucket,
+  RecentTradeRow,
   RiskSeverity,
 } from "@/lib/types";
 
@@ -27,11 +30,75 @@ function num(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parsePct(value: unknown, fallback = 0) {
+  if (typeof value === "string") {
+    return num(value.replace("%", ""), fallback);
+  }
+  return num(value, fallback);
+}
+
 function severityColor(severity: RiskSeverity) {
   if (severity === "BREACHED") return "var(--kill-bright)";
   if (severity === "WARNING") return "var(--short)";
   if (severity === "WATCH") return "var(--warn)";
   return "var(--long)";
+}
+
+function severityRank(severity: RiskSeverity) {
+  if (severity === "BREACHED") return 3;
+  if (severity === "WARNING") return 2;
+  if (severity === "WATCH") return 1;
+  return 0;
+}
+
+function maxSeverity(values: RiskSeverity[]): RiskSeverity {
+  return values.reduce<RiskSeverity>(
+    (highest, current) =>
+      severityRank(current) > severityRank(highest) ? current : highest,
+    "OK"
+  );
+}
+
+function buildBuckets(
+  trades: RecentTradeRow[] | null | undefined,
+  keyForTrade: (trade: RecentTradeRow) => string
+): PropFirmTelemetryBucket[] {
+  const groups = new Map<
+    string,
+    {
+      trades: number;
+      wins: number;
+      losses: number;
+      pnl: number;
+    }
+  >();
+
+  for (const trade of trades ?? []) {
+    const key = keyForTrade(trade);
+    if (!key) continue;
+    const current = groups.get(key) ?? {
+      trades: 0,
+      wins: 0,
+      losses: 0,
+      pnl: 0,
+    };
+    current.trades += 1;
+    current.pnl += num(trade.pnl);
+    if (trade.pnl > 0) current.wins += 1;
+    if (trade.pnl < 0) current.losses += 1;
+    groups.set(key, current);
+  }
+
+  return Array.from(groups.entries()).map(([key, row]) => ({
+    key,
+    trades: row.trades,
+    wins: row.wins,
+    losses: row.losses,
+    winRate: row.trades > 0 ? (row.wins / row.trades) * 100 : 0,
+    pnl: row.pnl,
+    avgR: null,
+    profitFactor: null,
+  }));
 }
 
 function Metric({
@@ -164,9 +231,19 @@ function BucketTable({
 
 export function PropFirmRiskPanel({
   risk,
+  performanceSummary,
+  recentTrades,
+  onAfterAction,
 }: {
   risk: Partial<PropFirmRiskDashboard> | null;
+  performanceSummary?: PerformanceSummary | null;
+  recentTrades?: RecentTradeRow[] | null;
+  onAfterAction?: () => void;
 }) {
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionResult, setActionResult] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
   if (!risk) {
     return (
       <section className='panel p-5'>
@@ -190,7 +267,7 @@ export function PropFirmRiskPanel({
     dailyDrawdownLimitPct: num(risk.rules?.dailyDrawdownLimitPct, 3),
     warningThresholdPct: num(risk.rules?.warningThresholdPct, 0.75),
     maxPositions: num(risk.rules?.maxPositions, 3),
-    maxAccountExposurePct: num(risk.rules?.maxAccountExposurePct, 100),
+    maxAccountExposurePct: num(risk.rules?.maxAccountExposurePct, 20),
     minFidelityScore: num(risk.rules?.minFidelityScore, 85),
   };
   const account = {
@@ -225,6 +302,45 @@ export function PropFirmRiskPanel({
     bySession: risk.telemetry?.bySession ?? [],
     topExitLeaks: risk.telemetry?.topExitLeaks ?? [],
   };
+  const hasSnapshotTelemetry = telemetry.trades > 0;
+  const derivedSymbolBuckets = buildBuckets(
+    recentTrades,
+    (trade) => trade.symbol
+  );
+  const derivedBestSymbols = derivedSymbolBuckets
+    .filter((row) => row.pnl > 0)
+    .sort((a, b) => b.pnl - a.pnl);
+  const derivedWorstSymbols = derivedSymbolBuckets
+    .filter((row) => row.pnl < 0)
+    .sort((a, b) => a.pnl - b.pnl);
+  const derivedExitLeaks = buildBuckets(recentTrades, (trade) =>
+    trade.closeReason || "Unknown"
+  )
+    .filter((row) => row.pnl < 0 || row.trades > 1)
+    .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
+  const bestSymbols =
+    telemetry.bestSymbols.length > 0 ? telemetry.bestSymbols : derivedBestSymbols;
+  const worstSymbols =
+    telemetry.worstSymbols.length > 0
+      ? telemetry.worstSymbols
+      : derivedWorstSymbols;
+  const topExitLeaks =
+    telemetry.topExitLeaks.length > 0
+      ? telemetry.topExitLeaks
+      : derivedExitLeaks;
+  const windowStats = hasSnapshotTelemetry
+    ? telemetry
+    : {
+        ...telemetry,
+        trades: num(performanceSummary?.totalTrades),
+        winRate: parsePct(performanceSummary?.winRate),
+        netPnl: num(performanceSummary?.netPnL),
+        avgR: performanceSummary?.avgRR ?? null,
+        profitFactor:
+          performanceSummary?.profitFactor === undefined
+            ? null
+            : performanceSummary.profitFactor,
+      };
   const alerts = risk.alerts ?? [];
   const recommendations = risk.recommendations ?? [];
   const windowDays = num(risk.windowDays, 30);
@@ -242,6 +358,39 @@ export function PropFirmRiskPanel({
         rules.maxAccountExposurePct * rules.warningThresholdPct
       ? "WATCH"
       : "OK";
+  const panelStatus = maxSeverity([
+    account.status,
+    exposureSeverity,
+    ...alerts.map((alert) => alert.severity),
+  ]);
+  const canPauseForExposure =
+    exposureSeverity === "BREACHED" || exposureSeverity === "WATCH";
+
+  async function applyExposureGuard() {
+    setActionBusy(true);
+    setActionResult(null);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/operator/bot/api/trading/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.error ?? `Pause request failed (${res.status}).`);
+      }
+      setActionResult(
+        "Exposure guard applied: trading is paused for new entries until you resume it."
+      );
+      onAfterAction?.();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Could not apply exposure guard."
+      );
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   return (
     <section className='panel'>
@@ -259,10 +408,10 @@ export function PropFirmRiskPanel({
         <div
           className='inline-flex items-center self-start border px-2.5 py-1 font-mono text-xs font-semibold tabular'
           style={{
-            color: severityColor(account.status),
-            borderColor: severityColor(account.status),
+            color: severityColor(panelStatus),
+            borderColor: severityColor(panelStatus),
           }}>
-          {account.status}
+          {panelStatus}
         </div>
       </div>
 
@@ -360,6 +509,15 @@ export function PropFirmRiskPanel({
                 ))}
               </div>
             )}
+            {canPauseForExposure && (
+              <button
+                type='button'
+                onClick={() => void applyExposureGuard()}
+                disabled={actionBusy}
+                className='mt-4 inline-flex items-center justify-center border border-[var(--warn)] px-3 py-2 font-mono text-xs text-[var(--warn)] hover:text-[var(--text)] disabled:opacity-50'>
+                {actionBusy ? "Applying guard..." : "Pause new entries"}
+              </button>
+            )}
           </div>
 
           <div className='border border-[var(--hairline)] bg-[var(--panel-raised)] p-3'>
@@ -379,59 +537,104 @@ export function PropFirmRiskPanel({
                 ))}
               </ul>
             )}
+            {canPauseForExposure && (
+              <div className='mt-4 border border-[var(--hairline)] bg-[var(--panel)] p-3'>
+                <p className='font-mono text-[11px] text-[var(--muted-dim)] leading-relaxed'>
+                  Safe automatic action available: pause new entries while
+                  exposure is above the configured cap. This does not close
+                  existing positions.
+                </p>
+              </div>
+            )}
           </div>
         </div>
+
+        {(actionResult || actionError) && (
+          <div
+            className='border px-3 py-2 font-mono text-xs'
+            style={{
+              color: actionError ? "var(--short)" : "var(--long)",
+              borderColor: actionError ? "var(--short-dim)" : "var(--long-dim)",
+              background: actionError
+                ? "rgba(240, 73, 92, 0.08)"
+                : "rgba(61, 214, 140, 0.08)",
+            }}>
+            {actionError ?? actionResult}
+          </div>
+        )}
 
         <div className='grid grid-cols-2 lg:grid-cols-5 gap-px bg-[var(--hairline)]'>
           <Metric
             label='Window win rate'
-            value={fmtPct(telemetry.winRate)}
-            sub={`${telemetry.trades} closed trades`}
-            tone={telemetry.winRate >= 50 ? "long" : "short"}
+            value={fmtPct(windowStats.winRate)}
+            sub={`${windowStats.trades} closed trades${
+              hasSnapshotTelemetry ? "" : " from performance summary"
+            }`}
+            tone={windowStats.winRate >= 50 ? "long" : "short"}
           />
           <Metric
             label='Window net PnL'
-            value={`${telemetry.netPnl >= 0 ? "+" : ""}${fmtUsd(
-              telemetry.netPnl
+            value={`${windowStats.netPnl >= 0 ? "+" : ""}${fmtUsd(
+              windowStats.netPnl
             )}`}
-            tone={telemetry.netPnl >= 0 ? "long" : "short"}
+            tone={windowStats.netPnl >= 0 ? "long" : "short"}
           />
-          <Metric label='Avg R' value={fmtR(telemetry.avgR)} />
-          <Metric label='Expectancy' value={fmtR(telemetry.expectancyR)} />
+          <Metric label='Avg R' value={fmtR(windowStats.avgR)} />
+          <Metric label='Expectancy' value={fmtR(windowStats.expectancyR)} />
           <Metric
             label='Profit factor'
             value={
-              telemetry.profitFactor === null
+              windowStats.profitFactor === null
                 ? "-"
-                : telemetry.profitFactor.toFixed(2)
+                : windowStats.profitFactor.toFixed(2)
             }
-            sub={`Worst loss ${fmtUsd(telemetry.maxClosedTradeLoss)}`}
-            tone={(telemetry.profitFactor ?? 0) >= 1 ? "long" : "short"}
+            sub={
+              hasSnapshotTelemetry
+                ? `Worst loss ${fmtUsd(windowStats.maxClosedTradeLoss)}`
+                : "Worst loss needs risk telemetry"
+            }
+            tone={(windowStats.profitFactor ?? 0) >= 1 ? "long" : "short"}
           />
         </div>
 
         <div className='grid grid-cols-1 xl:grid-cols-3 gap-4'>
           <BucketTable
             title='Best symbols'
-            rows={telemetry.bestSymbols}
-            empty='No winning symbols in this window.'
+            rows={bestSymbols}
+            empty={
+              recentTrades === null
+                ? "Loading symbol performance."
+                : "No winning symbols in this window."
+            }
           />
           <BucketTable
             title='Worst symbols'
-            rows={telemetry.worstSymbols}
-            empty='No losing symbols in this window.'
+            rows={worstSymbols}
+            empty={
+              recentTrades === null
+                ? "Loading symbol performance."
+                : "No losing symbols in this window."
+            }
           />
           <BucketTable
             title='Exit leaks'
-            rows={telemetry.topExitLeaks}
-            empty='No repeated exit leaks detected.'
+            rows={topExitLeaks}
+            empty={
+              recentTrades === null
+                ? "Loading exit patterns."
+                : "No repeated exit leaks detected."
+            }
           />
         </div>
 
         <BucketTable
           title='Session quality'
           rows={telemetry.bySession}
-          empty='No session data in this window.'
+          empty={
+            hasSnapshotTelemetry
+              ? "No session data in this window."
+              : "Waiting for session telemetry from the bot snapshot."
+          }
         />
       </div>
     </section>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { OperatorHeader } from "@/components/OperatorHeader";
 
@@ -144,6 +144,13 @@ type ReconciliationReport = {
   }>;
 };
 
+type SelectedLifecycleGroup =
+  ProductIntelligence["executionIntegrity"]["unresolvedTradeGroups"][number];
+type SelectedAuditTarget =
+  | { source: "issue"; issue: ReconciliationReport["issues"][number] }
+  | { source: "lifecycle"; group: SelectedLifecycleGroup }
+  | null;
+
 function fmtUsd(value: number) {
   const sign = value < 0 ? "-" : value > 0 ? "+" : "";
   return `${sign}$${Math.abs(value).toLocaleString("en-US", {
@@ -210,6 +217,9 @@ export default function ProductIntelligencePage() {
   const [reconciliation, setReconciliation] = useState<ReconciliationReport | null>(null);
   const [reconLoading, setReconLoading] = useState(false);
   const [reconError, setReconError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [selectedAuditTarget, setSelectedAuditTarget] = useState<SelectedAuditTarget>(null);
+  const auditSectionRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -236,13 +246,26 @@ export default function ProductIntelligencePage() {
   async function runReconciliationRepairs() {
     setReconLoading(true);
     setReconError(null);
+    setNotice(null);
     try {
       const res = await fetch(`/api/operator/copy-trade-reconciliation?days=${Math.min(days, 90)}`, {
         method: "POST",
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "Could not run reconciliation.");
-      setReconciliation(body as ReconciliationReport);
+      const report = body as ReconciliationReport;
+      setReconciliation(report);
+      const closed = report.automatedActions.filter((action) => action.outcome === "marked_closed").length;
+      const failed = report.automatedActions.filter((action) => action.outcome === "marked_failed").length;
+      const audited = report.automatedActions.filter((action) => action.outcome === "audit_recorded").length;
+      const repairs = closed + failed;
+      setNotice(
+        repairs > 0
+          ? `Safe repairs applied: ${closed} already-flat close(s) marked resolved, ${failed} stale open claim(s) marked failed. ${audited} issue(s) were audit-marked for manual review.`
+          : audited > 0
+          ? `No safe data repairs were applied. ${audited} issue(s) were audit-marked for manual review because changing them automatically could invent fills or PnL.`
+          : "Reconciliation ran. No safe automatic repairs were available for the current issues."
+      );
       load();
     } catch (err) {
       setReconError(err instanceof Error ? err.message : "Could not run reconciliation.");
@@ -264,7 +287,8 @@ export default function ProductIntelligencePage() {
     );
   }, [data]);
 
-  async function inspectTrade(leaderTradeId: string) {
+  async function inspectTrade(leaderTradeId: string, target: SelectedAuditTarget = null) {
+    setSelectedAuditTarget(target);
     setAuditLoading(leaderTradeId);
     setAuditError(null);
     try {
@@ -275,6 +299,9 @@ export default function ProductIntelligencePage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "Could not load audit timeline.");
       setAudit(body as AuditTimeline);
+      setTimeout(() => {
+        auditSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
     } catch (err) {
       setAuditError(err instanceof Error ? err.message : "Could not load audit timeline.");
     } finally {
@@ -337,6 +364,12 @@ export default function ProductIntelligencePage() {
           {reconError && (
             <div className="text-sm text-[var(--short)] font-mono border border-[var(--short-dim)] bg-[var(--short-dim)]/10 px-3 py-2">
               {reconError}
+            </div>
+          )}
+
+          {notice && (
+            <div className="text-sm text-[var(--long)] font-mono border border-[var(--long-dim)] bg-[var(--long-dim)]/10 px-3 py-2">
+              {notice}
             </div>
           )}
 
@@ -447,7 +480,7 @@ export default function ProductIntelligencePage() {
                               <td className="px-4 py-2 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => void inspectTrade(group.leaderTradeId)}
+                                  onClick={() => void inspectTrade(group.leaderTradeId, { source: "lifecycle", group })}
                                   disabled={auditLoading === group.leaderTradeId}
                                   className="font-mono text-[10px] border border-[var(--hairline-bright)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--long-dim)] disabled:opacity-50"
                                 >
@@ -482,6 +515,21 @@ export default function ProductIntelligencePage() {
                 </div>
               </section>
 
+              {(audit || auditError) && (
+                <section ref={auditSectionRef} className="panel scroll-mt-6">
+                  <AuditTimelinePanel
+                    audit={audit}
+                    auditError={auditError}
+                    selectedTarget={selectedAuditTarget}
+                    onClose={() => {
+                      setAudit(null);
+                      setAuditError(null);
+                      setSelectedAuditTarget(null);
+                    }}
+                  />
+                </section>
+              )}
+
               <section className="panel">
                 <div className="p-5 border-b border-[var(--hairline)] flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                   <div>
@@ -504,9 +552,21 @@ export default function ProductIntelligencePage() {
                     {reconLoading ? "Reconciling..." : "Run safe repairs"}
                   </button>
                 </div>
+                <div className="px-5 py-3 border-b border-[var(--hairline)] bg-[var(--panel-raised)]/45">
+                  <p className="font-mono text-[11px] text-[var(--muted)] leading-relaxed">
+                    Safe repairs only resolve already-flat failed closes and stale open claims.
+                    Other execution failures are audit-marked for manual review so the app
+                    does not invent fills or PnL.
+                  </p>
+                </div>
+                {notice && (
+                  <div className="mx-5 mt-5 text-sm text-[var(--long)] font-mono border border-[var(--long-dim)] bg-[var(--long-dim)]/10 px-3 py-2">
+                    {notice}
+                  </div>
+                )}
                 {reconciliation ? (
                   <div className="p-5 space-y-5">
-                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-px bg-[var(--hairline)]">
+                    <div className="grid grid-cols-2 lg:grid-cols-6 gap-px bg-[var(--hairline)]">
                       <Metric
                         label="Scanned logs"
                         value={String(reconciliation.scannedLogs)}
@@ -529,8 +589,29 @@ export default function ProductIntelligencePage() {
                       />
                       <Metric
                         label="Repair actions"
-                        value={String(reconciliation.automatedActions.length)}
-                        color={reconciliation.automatedActions.length > 0 ? "var(--warn)" : "var(--muted)"}
+                        value={String(
+                          reconciliation.automatedActions.filter((action) =>
+                            action.outcome === "marked_closed" || action.outcome === "marked_failed"
+                          ).length
+                        )}
+                        color={
+                          reconciliation.automatedActions.some((action) =>
+                            action.outcome === "marked_closed" || action.outcome === "marked_failed"
+                          )
+                            ? "var(--warn)"
+                            : "var(--muted)"
+                        }
+                      />
+                      <Metric
+                        label="Audit markers"
+                        value={String(
+                          reconciliation.automatedActions.filter((action) => action.outcome === "audit_recorded").length
+                        )}
+                        color={
+                          reconciliation.automatedActions.some((action) => action.outcome === "audit_recorded")
+                            ? "var(--warn)"
+                            : "var(--muted)"
+                        }
                       />
                     </div>
 
@@ -567,7 +648,7 @@ export default function ProductIntelligencePage() {
                                 <td className="px-4 py-2 text-right">
                                   <button
                                     type="button"
-                                    onClick={() => void inspectTrade(issue.leaderTradeId)}
+                                    onClick={() => void inspectTrade(issue.leaderTradeId, { source: "issue", issue })}
                                     disabled={auditLoading === issue.leaderTradeId}
                                     className="font-mono text-[10px] border border-[var(--hairline-bright)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--long-dim)] disabled:opacity-50"
                                   >
@@ -650,88 +731,6 @@ export default function ProductIntelligencePage() {
                 )}
               </section>
 
-              {(audit || auditError) && (
-                <section className="panel">
-                  <div className="p-5 border-b border-[var(--hairline)] flex items-start justify-between gap-4">
-                    <div>
-                      <span className="eyebrow">Trade audit timeline</span>
-                      <h2 className="font-display text-xl font-semibold mt-1">
-                        {audit?.leaderTradeId ?? "Audit unavailable"}
-                      </h2>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAudit(null);
-                        setAuditError(null);
-                      }}
-                      className="font-mono text-xs text-[var(--muted)] hover:text-[var(--text)]"
-                    >
-                      Close
-                    </button>
-                  </div>
-                  {auditError ? (
-                    <p className="m-5 text-sm text-[var(--short)] font-mono border border-[var(--short-dim)] bg-[var(--short-dim)]/10 px-3 py-2">
-                      {auditError}
-                    </p>
-                  ) : audit ? (
-                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-0">
-                      <div className="p-5 border-b xl:border-b-0 xl:border-r border-[var(--hairline)]">
-                        <span className="eyebrow">Follower outcomes</span>
-                        <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto">
-                          {audit.followers.length === 0 ? (
-                            <p className="text-xs font-mono text-[var(--muted)]">No follower log rows found.</p>
-                          ) : (
-                            audit.followers.map((row) => (
-                              <div key={`${row.userId}-${row.action}`} className="border border-[var(--hairline)] bg-[var(--panel-raised)] p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
-                                    <p className="font-display font-semibold">{row.displayName}</p>
-                                    <p className="font-mono text-[10px] text-[var(--muted)]">{row.action} • {row.symbol}</p>
-                                  </div>
-                                  <StatusPill status={row.status.toUpperCase()} />
-                                </div>
-                                <p className="font-mono text-[11px] text-[var(--muted-dim)] mt-2">
-                                  {row.detail ?? "No detail recorded."}
-                                </p>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                      <div className="p-5">
-                        <span className="eyebrow">Event trail</span>
-                        <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto">
-                          {audit.events.length === 0 ? (
-                            <p className="text-xs font-mono text-[var(--muted)]">
-                              No audit events recorded yet. New copy-trade events will populate this trail.
-                            </p>
-                          ) : (
-                            audit.events.map((event) => (
-                              <div key={event.id} className="grid grid-cols-[120px_1fr] gap-3 border-l border-[var(--hairline-bright)] pl-3 py-2">
-                                <span className="font-mono text-[10px] text-[var(--muted)]">
-                                  {new Date(event.createdAt).toLocaleTimeString()}
-                                </span>
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="font-mono text-xs font-semibold text-[var(--text)]">
-                                      {event.type}
-                                    </span>
-                                    {event.status && <StatusPill status={event.status.toUpperCase()} />}
-                                  </div>
-                                  <p className="text-xs text-[var(--muted-dim)] mt-1">
-                                    {event.displayName}: {event.detail ?? "No detail."}
-                                  </p>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
-              )}
             </>
           ) : null}
         </div>
@@ -774,6 +773,134 @@ function DataTable({
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function AuditTimelinePanel({
+  audit,
+  auditError,
+  selectedTarget,
+  onClose,
+}: {
+  audit: AuditTimeline | null;
+  auditError: string | null;
+  selectedTarget: SelectedAuditTarget;
+  onClose: () => void;
+}) {
+  const selectedLabel =
+    selectedTarget?.source === "issue"
+      ? `${selectedTarget.issue.symbol} ${selectedTarget.issue.action} • ${selectedTarget.issue.type.replace(/_/g, " ")}`
+      : selectedTarget?.source === "lifecycle"
+      ? `${selectedTarget.group.symbol} • lifecycle gap • ${selectedTarget.group.lastDetail ?? selectedTarget.group.lastStatus}`
+      : null;
+  const followerRows = audit
+    ? [...audit.followers].sort((a, b) => (
+        new Date(b.executedAt ?? b.createdAt).getTime() -
+        new Date(a.executedAt ?? a.createdAt).getTime()
+      ))
+    : [];
+  const eventRows = audit
+    ? [...audit.events].sort((a, b) => (
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ))
+    : [];
+
+  return (
+    <div>
+      <div className="p-5 border-b border-[var(--hairline)] flex items-start justify-between gap-4">
+        <div>
+          <span className="eyebrow">Trade audit timeline</span>
+          <h3 className="font-display text-xl font-semibold mt-1">
+            {audit?.leaderTradeId ?? "Audit unavailable"}
+          </h3>
+          {selectedLabel && (
+            <p className="font-mono text-xs text-[var(--warn)] mt-2">
+              Opened from: {selectedLabel}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="font-mono text-xs text-[var(--muted)] hover:text-[var(--text)]"
+        >
+          Close
+        </button>
+      </div>
+      {auditError ? (
+        <p className="m-4 text-sm text-[var(--short)] font-mono border border-[var(--short-dim)] bg-[var(--short-dim)]/10 px-3 py-2">
+          {auditError}
+        </p>
+      ) : audit ? (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-0">
+          <div className="p-5 border-b xl:border-b-0 xl:border-r border-[var(--hairline)]">
+            <span className="eyebrow">Follower outcomes</span>
+            <div className="mt-3 space-y-3 max-h-[420px] overflow-y-auto">
+              {audit.followers.length === 0 ? (
+                <p className="text-xs font-mono text-[var(--muted)]">No follower log rows found.</p>
+              ) : (
+                followerRows.map((row) => (
+                  <div
+                    key={`${row.userId}-${row.action}-${row.createdAt}`}
+                    className="border border-[var(--hairline)] bg-[var(--panel-raised)] p-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-display font-semibold">{row.displayName}</p>
+                        <p className="font-mono text-[10px] text-[var(--muted)]">
+                          {row.action} • {row.symbol}
+                        </p>
+                      </div>
+                      <StatusPill status={row.status.toUpperCase()} />
+                    </div>
+                    <p className="font-mono text-[11px] text-[var(--muted-dim)] mt-2">
+                      {row.detail ?? "No detail recorded."}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="p-5">
+            <span className="eyebrow">Event trail</span>
+            <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto">
+              {audit.events.length === 0 ? (
+                <p className="text-xs font-mono text-[var(--muted)]">
+                  No audit events recorded yet. New copy-trade events will populate this trail.
+                </p>
+              ) : (
+                eventRows.map((event) => (
+                  <div
+                    key={event.id}
+                    className="grid grid-cols-[88px_1fr] gap-3 border-l border-[var(--hairline-bright)] pl-3 py-2"
+                  >
+                    <span className="font-mono text-[10px] text-[var(--muted)]">
+                      {new Date(event.createdAt).toLocaleTimeString()}
+                    </span>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-semibold text-[var(--text)]">
+                          {event.type}
+                        </span>
+                        {event.status && <StatusPill status={event.status.toUpperCase()} />}
+                      </div>
+                      <p className="text-xs text-[var(--muted-dim)] mt-1">
+                        {event.displayName}: {event.detail ?? "No detail."}
+                      </p>
+                      {event.type === "legacy.copy_trade_log" && (
+                        <p className="text-[10px] font-mono text-[var(--warn)] mt-1">
+                          Reconstructed from legacy copy-trade log.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

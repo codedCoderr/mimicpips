@@ -10,7 +10,11 @@ import {
 } from "@/lib/session";
 import { useLiveSnapshot } from "@/lib/useLiveSnapshot";
 import { fetchRecentTrades, ApiError } from "@/lib/api";
-import type { RecentTradeRow, DashboardSnapshot } from "@/lib/types";
+import type {
+  RecentTradeRow,
+  DashboardSnapshot,
+  PerformanceSummary,
+} from "@/lib/types";
 import { StatusStrip } from "@/components/StatusStrip";
 import { AccountSummary } from "@/components/AccountSummary";
 import { PerformanceSummaryPanel } from "@/components/PerformanceSummaryPanel";
@@ -68,6 +72,8 @@ export default function DashboardPage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  const [performanceSummary, setPerformanceSummary] =
+    useState<PerformanceSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -266,8 +272,16 @@ export default function DashboardPage() {
           <div className='grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 max-w-[1400px] mx-auto'>
             <div className='space-y-6 min-w-0'>
               <AccountSummary snapshot={displaySnapshot} />
-              <PropFirmRiskPanel risk={displaySnapshot.propFirmRisk ?? null} />
-              <PerformanceSummaryPanel session={session} />
+              <PropFirmRiskPanel
+                risk={displaySnapshot.propFirmRisk ?? null}
+                performanceSummary={performanceSummary}
+                recentTrades={trades}
+                onAfterAction={refetch}
+              />
+              <PerformanceSummaryPanel
+                session={session}
+                onStatsLoaded={setPerformanceSummary}
+              />
               <FollowersSummaryPanel />
               <PositionsTable
                 positions={displaySnapshot.positions}

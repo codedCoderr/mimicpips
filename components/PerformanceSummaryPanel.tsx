@@ -53,7 +53,13 @@ const RANGE_OPTIONS = [
   { label: "All time", days: 3650 },
 ];
 
-export function PerformanceSummaryPanel({ session }: { session: Session }) {
+export function PerformanceSummaryPanel({
+  session,
+  onStatsLoaded,
+}: {
+  session: Session;
+  onStatsLoaded?: (stats: PerformanceSummary | null) => void;
+}) {
   const [days, setDays] = useState(30);
   const [stats, setStats] = useState<PerformanceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,13 +70,15 @@ export function PerformanceSummaryPanel({ session }: { session: Session }) {
     fetchPerformanceSummary(session, days)
       .then((result) => {
         setStats(result);
+        onStatsLoaded?.(result);
         setError(null);
       })
       .catch((err) => {
+        onStatsLoaded?.(null);
         setError(err instanceof ApiError ? err.message : "Failed to load performance stats.");
       })
       .finally(() => setLoading(false));
-  }, [session, days]);
+  }, [session, days, onStatsLoaded]);
 
   useEffect(() => {
     load();
