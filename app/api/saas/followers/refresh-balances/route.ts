@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
-import { getSaasDb } from "@/lib/saasDb";
-import { decryptSecret } from "@/lib/exchangeKeyCrypto";
-import { fetchCurrentBalance } from "@/lib/billingJobs";
-import type { ExchangeKeyDoc } from "@/lib/saasTypes";
+import { refreshFollowerBalances } from "@/lib/balanceRefresh";
 
 /**
  * Fetches every connected follower's CURRENT balance live from the
@@ -22,34 +19,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const db = await getSaasDb();
-  const keyDocs = await db
-    .collection<ExchangeKeyDoc>("exchange_keys")
-    .find({ verifiedAt: { $ne: null } })
-    .toArray();
-
-  let updated = 0;
-  let failed = 0;
-
-  for (const keyDoc of keyDocs) {
-    try {
-      const apiKey = await decryptSecret(keyDoc.apiKeyEncrypted);
-      const apiSecret = await decryptSecret(keyDoc.apiSecretEncrypted);
-      const balance = await fetchCurrentBalance(apiKey, apiSecret);
-
-      if (balance !== null) {
-        await db.collection<ExchangeKeyDoc>("exchange_keys").updateOne(
-          { _id: keyDoc._id },
-          { $set: { lastKnownBalanceUSDT: balance, lastBalanceCheckAt: new Date() } }
-        );
-        updated++;
-      } else {
-        failed++;
-      }
-    } catch {
-      failed++;
-    }
-  }
-
-  return NextResponse.json({ ok: true, updated, failed, total: keyDocs.length });
+  // Operator-triggered: no cap, they asked for current numbers now.
+  const result = await refreshFollowerBalances({ limit: Number.MAX_SAFE_INTEGER });
+  return NextResponse.json({ ok: true, updated: result.updated, failed: result.failed, total: result.total });
 }

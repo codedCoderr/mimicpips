@@ -1,4 +1,5 @@
 import { ObjectId, type Db, type Document } from "mongodb";
+import { checkFollowerFlatViaBot } from "@/lib/followerFlatCheck";
 import { getBotDb, getSaasDb } from "@/lib/saasDb";
 import type { CopyTradeAuditEventDoc, CopyTradeLogDoc } from "@/lib/saasTypes";
 
@@ -195,6 +196,14 @@ async function writeAuditOnce(
 
   return !!result?.upsertedCount;
 }
+
+/**
+ * Max exchange checks per reconciliation run. Each one is a round trip
+ * through the bot to Binance; an unbounded loop over a big backlog could
+ * outlive a serverless cron invocation. Whatever isn't reached this run is
+ * picked up on the next one.
+ */
+const MAX_FLAT_CHECKS_PER_RUN = 10;
 
 export async function runCopyTradeReconciliation(options?: {
   days?: number;
@@ -443,6 +452,120 @@ export async function runCopyTradeReconciliation(options?: {
           userId: issue.userId,
           outcome: "audit_recorded",
           detail: issue.recommendation,
+        });
+      }
+    }
+  }
+
+  // Repair: a copied trade the dashboard still shows as OPEN although the
+  // leader's trade is closed. Cause: the follower closed by hand on
+  // Binance, or the close event was missed. Only the exchange can say
+  // which, so ask it. "flat" -> write a CLOSE row. "open" or "unknown" ->
+  // leave everything alone (never guess flat: that would hide a live
+  // position from the follower).
+  if (applyRepairs) {
+    let checksUsed = 0;
+    for (const issue of uniqueIssues) {
+      if (issue.type !== "open_without_close") continue;
+      if (checksUsed >= MAX_FLAT_CHECKS_PER_RUN) break;
+      if (!ObjectId.isValid(issue.userId)) continue;
+
+      const openLog = logs.find(
+        (item) =>
+          item.userId instanceof ObjectId &&
+          item.userId.equals(new ObjectId(issue.userId)) &&
+          item.leaderTradeId === issue.leaderTradeId &&
+          item.action === "OPEN"
+      );
+      if (!openLog) continue;
+
+      checksUsed += 1;
+      const side = openLog.leaderSide === "SHORT" ? "SHORT" : "LONG";
+      const flat = await checkFollowerFlatViaBot(issue.userId, openLog.leaderSymbol, side);
+
+      if (flat.state !== "flat") {
+        automatedActions.push({
+          issue: "open_without_close",
+          leaderTradeId: issue.leaderTradeId,
+          userId: issue.userId,
+          outcome: "skipped",
+          detail:
+            flat.state === "open"
+              ? "Follower still holds a live position; not marked closed."
+              : `Could not confirm the follower is flat (${flat.reason}); left unchanged.`,
+        });
+        continue;
+      }
+
+      // Insert-if-absent, keyed on user + trade + CLOSE, so two overlapping
+      // runs cannot both write a close row for the same trade.
+      const closeRow: CopyTradeLogDoc = {
+        userId: openLog.userId,
+        leaderTradeId: openLog.leaderTradeId,
+        exchange: openLog.exchange ?? "binance",
+        action: "CLOSE",
+        leaderSymbol: openLog.leaderSymbol,
+        leaderSide: openLog.leaderSide,
+        leaderNotional: openLog.leaderNotional,
+        // Rows written by the bot's worker don't carry leaderBalance, but
+        // the shared type requires it. Fall back to 0 rather than inventing one.
+        leaderBalance: Number(openLog.leaderBalance ?? 0) || 0,
+        followerNotional: openLog.followerNotional ?? null,
+        followerOrderId: null,
+        entryPrice: openLog.entryPrice ?? null,
+        exitPrice: null,
+        realizedPnl: null,
+        roiPercentage: null,
+        status: "closed",
+        detail:
+          "Closed outside the bot (manual close on the exchange or a missed close event). Confirmed flat on the exchange by reconciliation. Realized PnL not recorded.",
+        executedAt: now,
+        createdAt: now,
+      };
+
+      // Insert-if-absent, keyed on user + trade + CLOSE, so two overlapping
+      // runs cannot both write a close row for the same trade.
+      // The filter's own equality fields (userId, leaderTradeId, action) are
+      // written by the upsert itself. Keep them OUT of $setOnInsert: setting
+      // the same path in both is the form MongoDB is strictest about, and
+      // it is not worth relying on remembered behaviour for a write that
+      // decides what a follower sees as open.
+      const insertFields: Omit<CopyTradeLogDoc, "userId" | "leaderTradeId" | "action"> = {
+        exchange: closeRow.exchange,
+        leaderSymbol: closeRow.leaderSymbol,
+        leaderSide: closeRow.leaderSide,
+        leaderNotional: closeRow.leaderNotional,
+        leaderBalance: closeRow.leaderBalance,
+        followerNotional: closeRow.followerNotional,
+        followerOrderId: closeRow.followerOrderId,
+        entryPrice: closeRow.entryPrice,
+        exitPrice: closeRow.exitPrice,
+        realizedPnl: closeRow.realizedPnl,
+        roiPercentage: closeRow.roiPercentage,
+        status: closeRow.status,
+        detail: closeRow.detail,
+        executedAt: closeRow.executedAt,
+        createdAt: closeRow.createdAt,
+      };
+      const result = await db.collection<CopyTradeLogDoc>("copy_trade_log").updateOne(
+        { userId: closeRow.userId, leaderTradeId: closeRow.leaderTradeId, action: "CLOSE" },
+        { $setOnInsert: insertFields },
+        { upsert: true }
+      );
+
+      if (result.upsertedCount > 0) {
+        await writeAudit(
+          db,
+          { ...openLog, action: "CLOSE", status: "closed" },
+          "reconciliation.open_verified_flat_marked_closed",
+          "Open copy trade marked closed: the exchange confirmed the follower is flat."
+        );
+        automatedActions.push({
+          issue: "open_without_close",
+          leaderTradeId: issue.leaderTradeId,
+          userId: issue.userId,
+          outcome: "marked_closed",
+          detail: "Exchange confirmed the follower is flat; CLOSE row written.",
         });
       }
     }

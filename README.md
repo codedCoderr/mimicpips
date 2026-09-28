@@ -219,3 +219,46 @@ curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/gate-sync" \
 
 Use a short schedule such as every 5 minutes. This does not open or close trades; it only updates follower copy-trading eligibility gates.
 Auto-enable only reverses pauses created by system gates. If a follower or operator manually turns copy trading off, gate sync will not silently turn it back on.
+
+### Copy-trade reconciliation
+
+This is the safety net for the copy-trade pipeline. It scans recent
+`copy_trade_log` rows for follower positions that opened but never got a
+matching close (for example a `position.closed` event lost while the bot was
+restarting), stale `processing` rows, and failed CLOSE rows where the follower
+was actually already flat, and it repairs the ones that are safe to repair.
+Without a scheduler calling it, a missed close goes unnoticed.
+
+```bash
+curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/copy-trade-reconciliation" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Use a 15-minute EventBridge schedule. The optional `?days=N` query parameter
+widens the scan window (default 7). It only repairs log rows; it never places
+or closes orders on an exchange, so a critical `open_without_close` finding
+still needs the operator to check the follower's account.
+
+### Balance refresh
+
+`lastKnownBalanceUSDT` is not only a display value. The billing cron pauses a
+follower when it falls below the pause balance, activation is gated on it, and
+the copy-trading toggle checks it. Nothing refreshed it automatically, so a
+real account showed ~$4,997 when the live balance was ~$3,996.
+
+```bash
+curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/balance-refresh" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Schedule this hourly. Each run refreshes at most 25 keys, most-stale first, so
+a large follower base is covered over several runs instead of risking a
+serverless timeout. A failed fetch keeps the previous value.
+
+### Reconciliation now verifies with the exchange
+
+For a copied trade that is still "open" after the leader closed, reconciliation
+asks the bot (`/api/saas/check-flat`) whether the follower is actually flat.
+Only a successful check that finds no position writes a CLOSE row. If the bot
+is unreachable or the answer is unknown, the row is left untouched. It never
+guesses flat. At most 10 checks run per invocation.

@@ -194,6 +194,7 @@ export type CopyTradeAuditEventType =
   | "reconciliation.issue_detected"
   | "reconciliation.stale_open_marked_failed"
   | "reconciliation.already_flat_marked_closed"
+  | "reconciliation.open_verified_flat_marked_closed"
   | "log.updated";
 
 export interface CopyTradeAuditEventDoc {
