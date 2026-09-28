@@ -478,9 +478,9 @@ async function callBotCopyTradeExecution(
   follower: { followerId: string; apiKey: string; apiSecret: string; followerNotional: number }
 ): Promise<BotCopyTradeResponse> {
   const botUrl = process.env.BOT_SERVER_URL;
-  const serviceKey = process.env.SAAS_SERVICE_KEY;
+  const serviceKey = process.env.SAAS_SERVICE_AUTH_KEY;
   if (!botUrl || !serviceKey) {
-    throw new Error("BOT_SERVER_URL / SAAS_SERVICE_KEY not configured.");
+    throw new Error("BOT_SERVER_URL / SAAS_SERVICE_AUTH_KEY not configured.");
   }
 
   const res = await fetch(`${botUrl.replace(/\/+$/, "")}/api/saas/execute-copy-trade`, {

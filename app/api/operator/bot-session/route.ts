@@ -6,7 +6,7 @@ import {
   BOT_SESSION_COOKIE,
   BOT_SESSION_TTL_SECONDS,
   createOperatorBotSessionToken,
-  verifyOperatorBotSessionToken,
+  resolveOperatorBotSession,
 } from "@/lib/operatorBotSession";
 import { normalizeBaseUrl } from "@/lib/url";
 
@@ -215,7 +215,7 @@ export async function GET(req: NextRequest) {
   if (!(await requireOperator(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const connected = !!(await verifyOperatorBotSessionToken(
+  const connected = !!(await resolveOperatorBotSession(
     req.cookies.get(BOT_SESSION_COOKIE)?.value
   ));
   return NextResponse.json({ connected });

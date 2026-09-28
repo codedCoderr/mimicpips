@@ -24,9 +24,9 @@ export function initCopyTradeSubscriber(): void {
   if (process.env.COPY_TRADE_WORKER_ENABLED !== "true") return;
 
   const botUrl = process.env.BOT_SERVER_URL;
-  const serviceKey = process.env.SAAS_SERVICE_KEY;
+  const serviceKey = process.env.SAAS_SERVICE_AUTH_KEY;
   if (!botUrl || !serviceKey) {
-    console.warn("[CopyTrade] Worker disabled: BOT_SERVER_URL / SAAS_SERVICE_KEY not configured.");
+    console.warn("[CopyTrade] Worker disabled: BOT_SERVER_URL / SAAS_SERVICE_AUTH_KEY not configured.");
     return;
   }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
-import { BOT_SESSION_COOKIE, verifyOperatorBotSessionToken } from "@/lib/operatorBotSession";
+import { BOT_SESSION_COOKIE, resolveOperatorBotSession } from "@/lib/operatorBotSession";
 
 const BOT_EVENTS_TIMEOUT_MS = 60_000;
 
@@ -14,11 +14,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const botSession = await verifyOperatorBotSessionToken(req.cookies.get(BOT_SESSION_COOKIE)?.value);
+  const botSession = await resolveOperatorBotSession(req.cookies.get(BOT_SESSION_COOKIE)?.value);
   if (!botSession) {
     return NextResponse.json({ error: "Bot connection is not configured." }, { status: 401 });
   }
-  const serviceKey = process.env.SAAS_SERVICE_KEY;
+  const serviceKey = process.env.SAAS_SERVICE_AUTH_KEY;
   if (!serviceKey) {
     return NextResponse.json({ error: "Event stream is not configured." }, { status: 500 });
   }

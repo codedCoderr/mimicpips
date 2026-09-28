@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
-import { BOT_SESSION_COOKIE, verifyOperatorBotSessionToken } from "@/lib/operatorBotSession";
+import { BOT_SESSION_COOKIE, resolveOperatorBotSession } from "@/lib/operatorBotSession";
 
 const DEFAULT_BOT_PROXY_TIMEOUT_MS = 15000;
 const REPORT_BOT_PROXY_TIMEOUT_MS = 60000;
@@ -15,7 +15,7 @@ async function proxyBot(req: NextRequest, path: string[]) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const botSession = await verifyOperatorBotSessionToken(req.cookies.get(BOT_SESSION_COOKIE)?.value);
+  const botSession = await resolveOperatorBotSession(req.cookies.get(BOT_SESSION_COOKIE)?.value);
   if (!botSession) {
     return NextResponse.json({ error: "Bot connection is not configured." }, { status: 401 });
   }

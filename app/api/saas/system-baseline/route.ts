@@ -34,10 +34,10 @@ export async function GET ( req: NextRequest ) {
   }
 
   const botUrl = process.env.BOT_SERVER_URL;
-  const serviceKey = process.env.SAAS_SERVICE_KEY;
+  const serviceKey = process.env.SAAS_SERVICE_AUTH_KEY;
   if ( !botUrl || !serviceKey ) {
     return NextResponse.json(
-      { error: "Server is not configured (BOT_SERVER_URL / SAAS_SERVICE_KEY missing)." },
+      { error: "Server is not configured (BOT_SERVER_URL / SAAS_SERVICE_AUTH_KEY missing)." },
       { status: 500 }
     );
   }

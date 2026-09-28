@@ -78,7 +78,7 @@ When the leader bot executes a trade, call:
 
 ```text
 POST /api/saas/copy-trades/execute
-X-Service-Key: $SAAS_SERVICE_KEY
+X-Service-Key: $SAAS_SERVICE_AUTH_KEY
 Content-Type: application/json
 ```
 

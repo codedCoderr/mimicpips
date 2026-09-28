@@ -43,9 +43,11 @@ export function markBotSessionExpired() {
 export async function loadVerifiedSession(): Promise<Session | null> {
   if (typeof window === "undefined") return null;
 
-  const localSession = loadSession();
-  if (!localSession) return null;
-
+  // The server is the source of truth: it reports connected=true if this
+  // browser has a valid override cookie OR the deployment has a default
+  // bot connection configured (BOT_SERVER_URL + BOT_DASHBOARD_API_KEY).
+  // The localStorage flag is no longer required, otherwise a fresh
+  // browser or a post-logout login would still bounce to /setup.
   try {
     const res = await fetch("/api/operator/bot-session", { cache: "no-store" });
     if (res.status === 401) {
@@ -53,7 +55,10 @@ export async function loadVerifiedSession(): Promise<Session | null> {
       return null;
     }
     const data = await res.json().catch(() => null);
-    if (res.ok && data?.connected === true) return localSession;
+    if (res.ok && data?.connected === true) {
+      saveSession();
+      return { connected: true };
+    }
   } catch {
     return null;
   }

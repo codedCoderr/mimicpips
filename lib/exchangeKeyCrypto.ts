@@ -20,10 +20,22 @@ import sodium from "libsodium-wrappers";
  * just sit right next to the code that needs it anyway.
  *
  * MASTER KEY CUSTODY (read this before deploying):
- * The master key lives in SAAS_SERVICE_KEY (env var, 32 bytes, base64).
+ * The master key lives in SAAS_MASTER_KEY (env var, 32 bytes, base64).
  * This is genuinely the single most sensitive secret in the whole system —
  * anyone with this key and DB access can decrypt every user's exchange
- * API keys. Self-hosting this (as chosen, vs. AWS KMS) means:
+ * API keys.
+ *
+ * SAAS_MASTER_KEY is used ONLY for this — encrypting/decrypting stored
+ * exchange credentials. It is deliberately a SEPARATE secret from
+ * SAAS_SERVICE_AUTH_KEY, which authenticates HTTP calls between the
+ * SaaS app and the bot (X-Service-Key header). These used to be the
+ * same env var: a leak of the HTTP auth secret (a far more exposed
+ * value — it travels over the network on every service-to-service
+ * call, sits in request logs/proxies, etc.) would ALSO hand over the
+ * ability to decrypt every follower's exchange keys. Splitting them
+ * means leaking one doesn't automatically compromise the other.
+ *
+ * Self-hosting this (as chosen, vs. AWS KMS) means:
  *   - YOU are the key custodian. There is no cloud provider enforcing
  *     access policies, audit logs, or automatic rotation.
  *   - Losing this key means every stored exchange key becomes permanently
@@ -45,21 +57,21 @@ async function ensureReady(): Promise<void> {
 }
 
 function loadMasterKey(): Uint8Array {
-  const raw = process.env.SAAS_SERVICE_KEY;
+  const raw = process.env.SAAS_MASTER_KEY;
   if (!raw) {
     throw new Error(
-      "SAAS_SERVICE_KEY is not set. Generate one with: node scripts/generate-master-key.mjs"
+      "SAAS_MASTER_KEY is not set. Generate one with: node scripts/generate-master-key.mjs"
     );
   }
   let key: Uint8Array;
   try {
     key = sodium.from_base64(raw, sodium.base64_variants.ORIGINAL);
   } catch {
-    throw new Error("SAAS_SERVICE_KEY is not valid base64.");
+    throw new Error("SAAS_MASTER_KEY is not valid base64.");
   }
   if (key.length !== sodium.crypto_secretbox_KEYBYTES) {
     throw new Error(
-      `SAAS_SERVICE_KEY must decode to exactly ${sodium.crypto_secretbox_KEYBYTES} bytes.`
+      `SAAS_MASTER_KEY must decode to exactly ${sodium.crypto_secretbox_KEYBYTES} bytes.`
     );
   }
   return key;

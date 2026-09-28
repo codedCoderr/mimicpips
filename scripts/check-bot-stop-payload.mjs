@@ -3,7 +3,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 const botUrl = process.env.BOT_SERVER_URL?.replace(/\/+$/, "");
-const serviceKey = process.env.SAAS_SERVICE_KEY;
+const serviceKey = process.env.SAAS_SERVICE_AUTH_KEY;
 const maxEvents = Number(process.env.CHECK_BOT_STOP_EVENTS ?? 10);
 const timeoutMs = Number(process.env.CHECK_BOT_STOP_TIMEOUT_MS ?? 30_000);
 
@@ -81,7 +81,7 @@ function inspectEnvelope(envelope) {
 
 async function main() {
   if (!botUrl || !serviceKey) {
-    throw new Error("BOT_SERVER_URL and SAAS_SERVICE_KEY must be set in .env.local.");
+    throw new Error("BOT_SERVER_URL and SAAS_SERVICE_AUTH_KEY must be set in .env.local.");
   }
 
   const controller = new AbortController();

@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { executeCopyTradeFanOut, hasStopLossProtection, parseLeaderTradeEvent } from "@/lib/copyTradeWorker";
 import { getErrorMessage } from "@/lib/errorMessage";
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * NOTE — the bot no longer calls this route automatically.
+ *
+ * This used to be the bot's outbox webhook target, firing on every real
+ * position.opened/position.closed and executing follower trades WITHOUT
+ * bracket SL/TP orders (see lib/copyTradeWorker.ts here — a naive
+ * limit-chase entry only, no placeFollowerBracketOrders equivalent). The
+ * bot ALSO runs its own separate src/saas/copyTradeWorker.ts, which
+ * subscribes to the same events in-process and does full bracket-order
+ * execution — so every eligible follower trade could fire TWICE (once
+ * naked via this route, once bracketed via the bot's own worker) if the
+ * bot's copy-trade worker process was ever running alongside the main
+ * bot process.
+ *
+ * The bot's src/index.ts now starts its copy-trade worker in-process as
+ * the single executor for both OPEN and CLOSE. This route is kept for
+ * operator-triggered manual replay of a specific leader trade event
+ * (e.g. via /api/operator/copy-trade-reconciliation or a future "replay
+ * this event" admin action) — it must not be reconnected to the bot's
+ * automatic position-event flow.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 
 interface BrokerEnvelope {
   payload?: unknown;
@@ -8,9 +33,22 @@ interface BrokerEnvelope {
 }
 
 function verifyServiceKey(req: NextRequest): boolean {
-  const expected = process.env.SAAS_SERVICE_KEY;
+  const expected = process.env.SAAS_SERVICE_AUTH_KEY;
   if (!expected) return false;
-  return req.headers.get("x-service-key") === expected;
+  const presented = req.headers.get("x-service-key");
+  if (!presented) return false;
+
+  // Timing-safe comparison, not === : a plain string equality check
+  // short-circuits on the first mismatched character, leaking timing
+  // information about how many leading characters were correct. Same
+  // reasoning as lib/paystack.ts's verifyWebhookSignature. Both buffers
+  // must be equal length or timingSafeEqual throws, so that's checked
+  // first — a length mismatch is already definitive proof of an invalid
+  // key, no timing risk there.
+  const expectedBuffer = Buffer.from(expected);
+  const presentedBuffer = Buffer.from(presented);
+  if (expectedBuffer.length !== presentedBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, presentedBuffer);
 }
 
 function isActionableIssue(status: string): boolean {
