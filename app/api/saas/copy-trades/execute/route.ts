@@ -5,25 +5,13 @@ import { getErrorMessage } from "@/lib/errorMessage";
 
 /**
  * ─────────────────────────────────────────────────────────────────────────
- * NOTE — the bot no longer calls this route automatically.
+ * Receives position events from the bot's outbox and fans them out to
+ * followers. This is the DEFAULT follower executor ("webhook" mode).
  *
- * This used to be the bot's outbox webhook target, firing on every real
- * position.opened/position.closed and executing follower trades WITHOUT
- * bracket SL/TP orders (see lib/copyTradeWorker.ts here — a naive
- * limit-chase entry only, no placeFollowerBracketOrders equivalent). The
- * bot ALSO runs its own separate src/saas/copyTradeWorker.ts, which
- * subscribes to the same events in-process and does full bracket-order
- * execution — so every eligible follower trade could fire TWICE (once
- * naked via this route, once bracketed via the bot's own worker) if the
- * bot's copy-trade worker process was ever running alongside the main
- * bot process.
- *
- * The bot's src/index.ts now starts its copy-trade worker in-process as
- * the single executor for both OPEN and CLOSE. This route is kept for
- * operator-triggered manual replay of a specific leader trade event
- * (e.g. via /api/operator/copy-trade-reconciliation or a future "replay
- * this event" admin action) — it must not be reconnected to the bot's
- * automatic position-event flow.
+ * If the bot is switched to COPY_TRADE_EXECUTOR=inprocess it stops calling
+ * this route and executes followers itself. The two are mutually exclusive:
+ * both active would place every follower order twice, so do not reconnect
+ * this route to a bot that is running the in-process worker.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
