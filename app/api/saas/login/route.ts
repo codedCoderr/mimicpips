@@ -7,7 +7,7 @@ const WINDOW_MS = 15 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for") ?? "unknown";
-  if (isRateLimited(`login:ip:${ip}`, MAX_ATTEMPTS, WINDOW_MS)) {
+  if (await isRateLimited(`login:ip:${ip}`, MAX_ATTEMPTS, WINDOW_MS)) {
     return NextResponse.json(
       { error: "Too many login attempts. Try again later." },
       { status: 429 }
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   // rejected immediately rather than paying the bcrypt cost every time,
   // and so this check itself doesn't count as an extra attempt.
   const accountKey = `login:account:${email}`;
-  if (isCurrentlyLimited(accountKey, MAX_ATTEMPTS)) {
+  if (await isCurrentlyLimited(accountKey, MAX_ATTEMPTS)) {
     return NextResponse.json(
       { error: "Too many login attempts for this account. Try again later." },
       { status: 429 }
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     // limiter — a request that never gets this far (rejected above, or
     // missing fields) doesn't count, so legitimate use (retyping a
     // password once, logging in from a new device) isn't punished.
-    recordFailedAttempt(accountKey, WINDOW_MS);
+    await recordFailedAttempt(accountKey, WINDOW_MS);
     return NextResponse.json({ error: "Incorrect email or password." }, { status: 401 });
   }
 

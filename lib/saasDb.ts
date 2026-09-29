@@ -119,6 +119,10 @@ async function ensureIndexes ( database: Db ): Promise<void> {
       database
         .collection( "email_verification_tokens" )
         .createIndex( { expiresAt: 1 }, { expireAfterSeconds: 0 } ),
+      database.collection( "rate_limit_buckets" ).createIndex(
+        { resetAt: 1 },
+        { expireAfterSeconds: 0 } // Mongo TTL index — auto-cleans expired rate-limit buckets
+      ),
     ] );
     indexesEnsured = true;
     ensuringIndexes = null;

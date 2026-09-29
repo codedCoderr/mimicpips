@@ -14,7 +14,7 @@ function isValidEmail ( email: string ): boolean {
 
 export async function POST ( req: NextRequest ) {
   const ip = req.headers.get( "x-forwarded-for" ) ?? "unknown";
-  if ( isRateLimited( `signup:${ ip }`, MAX_ATTEMPTS, WINDOW_MS ) ) {
+  if ( await isRateLimited( `signup:${ ip }`, MAX_ATTEMPTS, WINDOW_MS ) ) {
     return NextResponse.json(
       { error: "Too many signup attempts. Try again later." },
       { status: 429 }

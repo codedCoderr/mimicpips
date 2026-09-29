@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });
   }
 
-  if (isRateLimited(`connect-exchange:${user._id}`, MAX_ATTEMPTS, WINDOW_MS)) {
+  if (await isRateLimited(`connect-exchange:${user._id}`, MAX_ATTEMPTS, WINDOW_MS)) {
     return NextResponse.json(
       { error: "Too many attempts. Wait a while before trying again." },
       { status: 429 }

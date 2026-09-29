@@ -3,6 +3,7 @@ import { getSaasDb } from "./saasDb";
 import { calculateFollowerNotional, getCopyTradePauseBalanceUSDT } from "./copyTradeSizing";
 import { decryptSecret } from "./exchangeKeyCrypto";
 import { getErrorMessage } from "./errorMessage";
+import { calculateDirectionalPnl } from "./pnlMath";
 import type {
   CopyTradeLogDoc,
   CopyTradeLogStatus,
@@ -372,14 +373,9 @@ async function executeForFollower(
     if (!execution.ok && event.action === "CLOSE" && /no matching follower position is open/i.test(reason)) {
       const exitPrice = event.exitPrice ?? null;
       const entryPrice = openLog?.entryPrice ?? null;
-      const realizedPnl =
-        entryPrice && exitPrice && sizing.followerNotional
-          ? ((exitPrice - entryPrice) / entryPrice) * sizing.followerNotional * (event.side === "SHORT" ? -1 : 1)
-          : null;
-      const roiPercentage =
-        realizedPnl !== null && sizing.followerNotional
-          ? (realizedPnl / sizing.followerNotional) * 100
-          : null;
+      const pnlResult = calculateDirectionalPnl(entryPrice, exitPrice, sizing.followerNotional, event.side);
+      const realizedPnl = pnlResult?.pnl ?? null;
+      const roiPercentage = pnlResult?.roi ?? null;
 
       await writeAuditEvent(db, event, userId, {
         type: "execution.repaired_already_flat",
@@ -417,8 +413,8 @@ async function executeForFollower(
     const entryPrice = event.action === "OPEN" ? execution.avgFillPrice ?? null : openLog?.entryPrice ?? null;
     const exitPrice = event.action === "CLOSE" ? execution.avgFillPrice ?? event.exitPrice ?? null : null;
     const priceBasedPnl =
-      event.action === "CLOSE" && entryPrice && exitPrice && sizing.followerNotional
-        ? ((exitPrice - entryPrice) / entryPrice) * sizing.followerNotional * (event.side === "SHORT" ? -1 : 1)
+      event.action === "CLOSE"
+        ? calculateDirectionalPnl(entryPrice, exitPrice, sizing.followerNotional, event.side)?.pnl ?? null
         : null;
     const leaderRealizedPnl = event.realizedPnl ?? null;
     const leaderScaledPnl =

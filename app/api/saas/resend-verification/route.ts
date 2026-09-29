@@ -18,7 +18,7 @@ export async function POST ( req: NextRequest ) {
     return NextResponse.json( { error: "Email is already verified." }, { status: 409 } );
   }
 
-  if ( isRateLimited( `resend-verification:${ user._id }`, MAX_ATTEMPTS, WINDOW_MS ) ) {
+  if ( await isRateLimited( `resend-verification:${ user._id }`, MAX_ATTEMPTS, WINDOW_MS ) ) {
     return NextResponse.json(
       { error: "Too many resend attempts. Wait a while before trying again." },
       { status: 429 }
