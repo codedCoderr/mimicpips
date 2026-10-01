@@ -47,6 +47,7 @@ interface FollowerHealth {
 
 interface UnifiedTrade {
   id: string;
+  leaderTradeId: string;
   symbol: string;
   side: "LONG" | "SHORT";
   entryPrice: number;
@@ -228,6 +229,17 @@ function stopLossLabel ( trade: UnifiedTrade ): string {
   return "Stop tracked";
 }
 
+/**
+ * A row can be closed only if it has a real leaderTradeId that traces
+ * back to an actual leader position — not the fallback-to-entry.id case
+ * (a legacy row with no leaderTradeId recorded at all). Closing by a value
+ * that was never a real leader trade id would just fail server-side, so
+ * the button is hidden rather than shown-then-erroring for those rows.
+ */
+function canCloseTrade ( trade: UnifiedTrade ): boolean {
+  return trade.isOpen && trade.leaderTradeId !== trade.id;
+}
+
 function stopDistancePct ( trade: UnifiedTrade ): number | null {
   const entryPrice = Number( trade.entryPrice ?? 0 );
   const stopLossPrice = Number( trade.stopLossPrice ?? 0 );
@@ -265,6 +277,13 @@ export function CopyTradingDashboardClient ( {
   const [ health, setHealth ] = useState<FollowerHealth | null>( null );
   const [ cardGenerating, setCardGenerating ] = useState( false );
   const [ cardNotice, setCardNotice ] = useState<string | null>( null );
+  // Two-step confirm: confirmCloseId holds the trade awaiting a second
+  // click ("Close position" -> "Confirm close?"), closingId holds the one
+  // currently in flight (disables the button, shows a spinner state) so a
+  // double-click can't send two close requests for the same trade.
+  const [ confirmCloseId, setConfirmCloseId ] = useState<string | null>( null );
+  const [ closingId, setClosingId ] = useState<string | null>( null );
+  const [ closeError, setCloseError ] = useState<string | null>( null );
 
   const loadLogs = useCallback( ( showLoading = false ) => {
     if ( showLoading ) setLogLoading( true );
@@ -331,6 +350,39 @@ export function CopyTradingDashboardClient ( {
       document.removeEventListener( "visibilitychange", refresh );
     };
   }, [ loadLogs ] );
+
+  async function handleCloseTrade ( leaderTradeId: string ) {
+    if ( confirmCloseId !== leaderTradeId ) {
+      // First click: arm confirmation, don't send anything yet.
+      setConfirmCloseId( leaderTradeId );
+      setCloseError( null );
+      return;
+    }
+
+    setConfirmCloseId( null );
+    setClosingId( leaderTradeId );
+    setCloseError( null );
+    try {
+      const res = await fetch( "/api/saas/close-position", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify( { leaderTradeId } ),
+      } );
+      const data = await res.json().catch( () => null );
+      if ( !res.ok ) {
+        throw new Error( data?.error ?? "Could not close this position." );
+      }
+      // Refresh from the server rather than optimistically removing the
+      // row — status "already_flat" (a race with the leader's own close
+      // landing first) is a success from the follower's point of view but
+      // isn't distinguishable from "closed" without re-reading the log.
+      loadLogs( false );
+    } catch ( err ) {
+      setCloseError( err instanceof Error ? err.message : "Could not close this position." );
+    } finally {
+      setClosingId( null );
+    }
+  }
 
   async function handleToggle () {
     setToggling( true );
@@ -465,6 +517,11 @@ export function CopyTradingDashboardClient ( {
       if ( !map.has( tradeKey ) ) {
         map.set( tradeKey, {
           id: entry.id,
+          // Falls back to entry.id (matching tradeKey's own fallback above)
+          // for legacy rows with no leaderTradeId — the close button is
+          // hidden for those (see canCloseTrade) since the bot can't look
+          // one up by a value that was never actually a leader trade id.
+          leaderTradeId: entry.leaderTradeId || entry.id,
           symbol: entry.symbol,
           side: entry.side,
           entryPrice: entry.entryPrice || 0,
@@ -812,7 +869,7 @@ export function CopyTradingDashboardClient ( {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[var(--hairline)]">
-                      { [ "Symbol", "Side", "Entry", "Mark", "Your Size", "PnL", "Open for", "SL", "Progress" ].map( ( h ) => (
+                      { [ "Symbol", "Side", "Entry", "Mark", "Your Size", "PnL", "Open for", "SL", "Progress", "" ].map( ( h ) => (
                         <th key={ h } className="eyebrow text-left px-4 py-2.5 font-normal whitespace-nowrap">
                           { h }
                         </th>
@@ -851,10 +908,44 @@ export function CopyTradingDashboardClient ( {
                           </div>
                           <div className="text-[10px] text-[var(--muted)]">Out: Active</div>
                         </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap text-right">
+                          { canCloseTrade( e ) && (
+                            closingId === e.leaderTradeId ? (
+                              <span className="text-[10px] text-[var(--muted)]">Closing…</span>
+                            ) : confirmCloseId === e.leaderTradeId ? (
+                              <div className="flex items-center gap-1.5 justify-end">
+                                <button
+                                  onClick={ () => handleCloseTrade( e.leaderTradeId ) }
+                                  className="text-[10px] font-semibold px-2 py-1 rounded border border-[var(--short-dim)] text-[var(--short)] hover:bg-[var(--short-dim)] transition-colors"
+                                >
+                                  Confirm close?
+                                </button>
+                                <button
+                                  onClick={ () => setConfirmCloseId( null ) }
+                                  className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors px-1"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={ () => handleCloseTrade( e.leaderTradeId ) }
+                                className="text-[10px] font-semibold px-2 py-1 rounded border border-[var(--hairline)] text-[var(--muted)] hover:border-[var(--short-dim)] hover:text-[var(--short)] transition-colors"
+                              >
+                                Close position
+                              </button>
+                            )
+                          ) }
+                        </td>
                       </tr>
                     ) ) }
                   </tbody>
                 </table>
+              </div>
+            ) }
+            { closeError && (
+              <div className="px-5 py-3 border-t border-[var(--hairline)]">
+                <p className="text-xs font-mono text-[var(--warn)]">{ closeError }</p>
               </div>
             ) }
           </div>

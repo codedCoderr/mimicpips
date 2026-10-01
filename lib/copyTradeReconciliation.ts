@@ -1,7 +1,8 @@
 import { ObjectId, type Db, type Document } from "mongodb";
 import { checkFollowerFlatViaBot } from "@/lib/followerFlatCheck";
+import { closeFollowerPositionViaBot } from "@/lib/followerCloseViaBot";
 import { getBotDb, getSaasDb } from "@/lib/saasDb";
-import type { CopyTradeAuditEventDoc, CopyTradeLogDoc } from "@/lib/saasTypes";
+import type { CopyTradeAuditEventDoc, CopyTradeLogDoc, CopyTradeLogStatus } from "@/lib/saasTypes";
 
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -205,6 +206,31 @@ async function writeAuditOnce(
  */
 const MAX_FLAT_CHECKS_PER_RUN = 10;
 
+/**
+ * Does this OPEN row's status mean the follower might genuinely still hold
+ * a live position on the exchange, such that it needs a matching CLOSE?
+ *
+ * "failed" is included on purpose: an OPEN row logged "failed" does NOT
+ * mean nothing was placed on the exchange — the entry can fill and then a
+ * bracket (SL/TP) order fail, which still leaves the follower holding a
+ * real, unprotected position. Checking only "executed" (the original
+ * logic) meant a failed-but-live OPEN was invisible to reconciliation: it
+ * would never be flagged, never get a checkFollowerFlatViaBot probe, and
+ * would stay "open" on the follower's dashboard forever, with no path to
+ * close it short of the exact original leader event arriving again. This
+ * is what let a real stuck-open trade (follower dashboard showing an open
+ * PHB position well after the leader had closed theirs) go undetected by
+ * reconciliation specifically.
+ *
+ * The bot's own close functions already treat "executed" and "failed" as
+ * equally possibly-live (see closeFollowerPositionById's openLog query in
+ * the bot) — this brings reconciliation's detection in line with what the
+ * bot itself considers closeable.
+ */
+export function isPossiblyLiveOpenStatus(status: CopyTradeLogStatus): boolean {
+  return status === "executed" || status === "processing" || status === "failed";
+}
+
 export async function runCopyTradeReconciliation(options?: {
   days?: number;
   applyRepairs?: boolean;
@@ -371,7 +397,7 @@ export async function runCopyTradeReconciliation(options?: {
   for (const group of byUserAndTrade.values()) {
     const opens = group.filter((log) => log.action === "OPEN");
     const closes = group.filter((log) => log.action === "CLOSE");
-    const executedOpen = opens.find((log) => log.status === "executed" || log.status === "processing");
+    const executedOpen = opens.find((log) => isPossiblyLiveOpenStatus(log.status));
     const closed = closes.find((log) => log.status === "closed" || log.status === "processing");
 
     if (executedOpen && !closed && closedLeaderTradeIds.has(executedOpen.leaderTradeId)) {
@@ -483,17 +509,44 @@ export async function runCopyTradeReconciliation(options?: {
       const side = openLog.leaderSide === "SHORT" ? "SHORT" : "LONG";
       const flat = await checkFollowerFlatViaBot(issue.userId, openLog.leaderSymbol, side);
 
-      if (flat.state !== "flat") {
+      if (flat.state === "unknown") {
         automatedActions.push({
           issue: "open_without_close",
           leaderTradeId: issue.leaderTradeId,
           userId: issue.userId,
           outcome: "skipped",
-          detail:
-            flat.state === "open"
-              ? "Follower still holds a live position; not marked closed."
-              : `Could not confirm the follower is flat (${flat.reason}); left unchanged.`,
+          detail: `Could not confirm the follower is flat (${flat.reason}); left unchanged.`,
         });
+        continue;
+      }
+
+      if (flat.state === "open") {
+        // The leader's trade is closed but the follower is genuinely still
+        // holding a live position on the exchange — this is the actual gap
+        // that used to leave PHB-shaped trades open indefinitely: the
+        // original close event was missed (or the OPEN itself was logged
+        // "failed" so nothing ever watched for this trade's close at all),
+        // and without this, reconciliation could only ever confirm the
+        // problem, never fix it. closeFollowerPositionViaBot calls the
+        // exact same bot endpoint, with the exact same ownership
+        // re-verification and in-flight locking, as the follower
+        // dashboard's own "Close position" button — reconciliation places
+        // a REAL order here, it does not just relabel a database row.
+        const closeResult = await closeFollowerPositionViaBot(issue.userId, issue.leaderTradeId);
+        automatedActions.push({
+          issue: "open_without_close",
+          leaderTradeId: issue.leaderTradeId,
+          userId: issue.userId,
+          outcome: closeResult.ok ? "marked_closed" : "skipped",
+          detail: closeResult.ok
+            ? `Leader trade is closed but the follower was still holding ${flat.contracts} contracts; reconciliation closed the position (${closeResult.status}).`
+            : `Follower still holds a live position (${flat.contracts} contracts) and the close attempt failed: ${closeResult.reason}. Will retry next run.`,
+        });
+        // No local CLOSE row is written here on success: closeFollowerPositionViaBot
+        // -> closeFollowerPositionById already writes the real CLOSE row
+        // itself (with actual fill price and PnL), which is strictly more
+        // accurate than anything reconciliation could construct from the
+        // leader's own prices. Nothing further to do for this issue.
         continue;
       }
 

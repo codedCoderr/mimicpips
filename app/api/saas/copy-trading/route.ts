@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 // Ensure this points strictly to saasAuth
 import { COOKIE_NAME as SAAS_COOKIE_NAME, verifySessionToken } from "@/lib/saasAuth";
 import { getSaasDb } from "@/lib/saasDb";
+import { isSubscriptionActiveForGates } from "@/lib/subscriptionGates";
 import type {
   UserDoc,
   ExchangeKeyDoc,
@@ -63,7 +64,7 @@ export async function GET ( req: NextRequest ) {
     const warnBalanceUSDT = getCopyTradeWarnBalanceUSDT();
     const pauseBalanceUSDT = getCopyTradePauseBalanceUSDT();
     const minimumBalanceMet = exchangeConnected && Number( key?.lastKnownBalanceUSDT ?? 0 ) >= minActivationBalanceUSDT;
-    const subscriptionActive = sub?.status === "ACTIVE";
+    const subscriptionActive = isSubscriptionActiveForGates( sub );
     const noPendingInvoice = !pendingInvoice;
     const allGatesMet = emailVerified && exchangeConnected && minimumBalanceMet && subscriptionActive && noPendingInvoice;
 
@@ -127,7 +128,7 @@ export async function POST ( req: NextRequest ) {
     const warnBalanceUSDT = getCopyTradeWarnBalanceUSDT();
     const pauseBalanceUSDT = getCopyTradePauseBalanceUSDT();
     const minimumBalanceMet = exchangeConnected && Number( key?.lastKnownBalanceUSDT ?? 0 ) >= minActivationBalanceUSDT;
-    const subscriptionActive = sub?.status === "ACTIVE";
+    const subscriptionActive = isSubscriptionActiveForGates( sub );
     const noPendingInvoice = !pendingInvoice;
     const allGatesMet = emailVerified && exchangeConnected && minimumBalanceMet && subscriptionActive && noPendingInvoice;
 

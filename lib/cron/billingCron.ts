@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { getSaasDb } from "@/lib/saasDb";
 import { runPerformanceFeeBillingCycle, runSubscriptionRenewalCycle } from "@/lib/billingJobs";
 import { runRetentionEmailCycle } from "@/lib/retentionEmails";
+import { isSubscriptionActiveForGates } from "@/lib/subscriptionGates";
 import { runMarketingAutomationCycle } from "@/lib/marketingAutomation";
 import {
   getCopyTradeMinActivationBalanceUSDT,
@@ -110,7 +111,16 @@ export async function enforceCopyTradingGates () {
     const isUnverified = !user.emailVerified;
     const hasNoVerifiedKey = !key;
     const isBelowPauseBalance = Number( key?.lastKnownBalanceUSDT ?? 0 ) < pauseBalanceUSDT;
-    const isSubNonActive = !sub || sub.status !== "ACTIVE";
+    // See isSubscriptionActiveForGates's doc comment: status alone isn't
+    // enough, since it only flips away from "ACTIVE" once the (monthly)
+    // billing cron runs. periodHasLapsed is kept separate from
+    // isSubNonActive only so the reason label below can distinguish "never
+    // had an active subscription" from "was active but the period expired
+    // and hasn't been billed yet" for operator diagnosis.
+    const subIsActive = isSubscriptionActiveForGates( sub, now );
+    const periodHasLapsed =
+      sub?.status === "ACTIVE" && sub.currentPeriodEnd !== null && sub.currentPeriodEnd <= now;
+    const isSubNonActive = !subIsActive;
     const hasPendingInvoice = pendingInvoiceUserIds.has( userIdStr );
 
     if ( isUnverified || hasNoVerifiedKey || isBelowPauseBalance || isSubNonActive || hasPendingInvoice ) {
@@ -120,9 +130,11 @@ export async function enforceCopyTradingGates () {
           ? "exchange_not_verified"
           : isBelowPauseBalance
             ? "below_pause_balance"
-            : isSubNonActive
-              ? "subscription_inactive"
-              : "pending_invoice";
+            : periodHasLapsed
+              ? "subscription_period_lapsed"
+              : isSubNonActive
+                ? "subscription_inactive"
+                : "pending_invoice";
       disabledUsers.push( { id: user._id!, reason } );
     }
   }

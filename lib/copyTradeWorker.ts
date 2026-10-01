@@ -4,6 +4,7 @@ import { calculateFollowerNotional, getCopyTradePauseBalanceUSDT } from "./copyT
 import { decryptSecret } from "./exchangeKeyCrypto";
 import { getErrorMessage } from "./errorMessage";
 import { calculateDirectionalPnl } from "./pnlMath";
+import { isSubscriptionActiveForGates } from "./subscriptionGates";
 import type {
   CopyTradeLogDoc,
   CopyTradeLogStatus,
@@ -224,9 +225,17 @@ async function loadEligibleFollowers(db: Db, event: LeaderTradeEvent): Promise<E
       .collection<ExchangeKeyDoc>("exchange_keys")
       .find({ userId: { $in: userIds }, verifiedAt: { $ne: null } })
       .toArray(),
+    // NOT filtered by status: "ACTIVE" here — see isSubscriptionActiveForGates's
+    // doc comment. status only flips away from ACTIVE once the (monthly)
+    // billing cron runs, so a status-only filter would let a follower whose
+    // currentPeriodEnd already passed, but hasn't been processed by that
+    // cron yet, still be treated as subscribed and get real orders placed
+    // on their exchange account. Every subscription is fetched and the
+    // real activity check (including the currentPeriodEnd comparison) is
+    // applied below, per follower.
     db
       .collection<SubscriptionDoc>("subscriptions")
-      .find({ userId: { $in: userIds }, status: "ACTIVE" })
+      .find({ userId: { $in: userIds } })
       .toArray(),
     db
       .collection<PerformanceFeeInvoiceDoc>("performance_fee_invoices")
@@ -244,7 +253,11 @@ async function loadEligibleFollowers(db: Db, event: LeaderTradeEvent): Promise<E
     const key = keyByUser.get(userId);
     const subscription = subscriptionByUser.get(userId);
     if (!key) return [];
-    if (event.action === "OPEN" && (!subscription || pendingInvoiceUsers.has(userId))) return [];
+    if (
+      event.action === "OPEN" &&
+      (!isSubscriptionActiveForGates(subscription) || pendingInvoiceUsers.has(userId))
+    )
+      return [];
     return [{ user: user as UserDoc & { _id: ObjectId }, key, subscription }];
   });
 }

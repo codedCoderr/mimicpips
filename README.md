@@ -235,9 +235,20 @@ curl -X POST "$NEXT_PUBLIC_APP_URL/api/cron/copy-trade-reconciliation" \
 ```
 
 Use a 15-minute EventBridge schedule. The optional `?days=N` query parameter
-widens the scan window (default 7). It only repairs log rows; it never places
-or closes orders on an exchange, so a critical `open_without_close` finding
-still needs the operator to check the follower's account.
+widens the scan window (default 7).
+
+Most repairs only touch `copy_trade_log` rows (marking a row closed when the
+follower was already flat, clearing a stale `processing` row). One repair is
+different: `open_without_close` — a follower whose OPEN row (including one
+logged `failed`, which can still mean a live, unprotected position) has no
+matching CLOSE even though the leader's trade is closed — is checked against
+the real exchange via the bot. If the exchange confirms the position is
+genuinely still open, reconciliation has the bot place a real market close
+order for that follower (the same code path as the follower dashboard's own
+"Close position" button), not just a database label change. If the exchange
+says "unknown" (bot unreachable, bad key, etc.), nothing is touched and it's
+retried next run — reconciliation never assumes flat, and never guesses.
+Capped at 10 such checks per run.
 
 ### Balance refresh
 
