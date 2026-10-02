@@ -67,7 +67,7 @@ function CopyTradeToggle ( {
   }
 
   const allGatesMet =
-    follower.emailVerified && follower.exchangeConnected && follower.subscriptionStatus === "ACTIVE" && follower.pendingInvoiceTotalNGN === 0;
+    follower.emailVerified && follower.exchangeConnected && follower.subscriptionActive && follower.pendingInvoiceTotalNGN === 0;
   // Turning ON requires all four gates. Turning OFF is always allowed —
   // an operator must be able to disable a follower even if they no
   // longer meet all gates (e.g. a subscription that lapsed after being
@@ -446,7 +446,7 @@ export default function FollowersPage () {
                         <td className="px-4 py-3">
                           <StatusPill
                             label={ f.subscriptionStatus ?? "NO SUBSCRIPTION" }
-                            active={ f.subscriptionStatus === "ACTIVE" }
+                            active={ f.subscriptionActive }
                             warn={ f.subscriptionStatus === "PAST_DUE" }
                           />
                         </td>

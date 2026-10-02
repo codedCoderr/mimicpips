@@ -5,7 +5,7 @@ import type { SubscriptionDoc } from "@/lib/saasTypes";
  * purposes — not just "was it marked ACTIVE the last time something wrote
  * to it".
  *
- * sub.status only flips away from "ACTIVE" when runSubscriptionRenewalCycle
+ * status only flips away from "ACTIVE" when runSubscriptionRenewalCycle
  * actually runs (the billing cron, documented as a monthly schedule). A
  * subscription whose currentPeriodEnd has already passed but that hasn't
  * been processed by that cron yet still has status "ACTIVE" in the
@@ -21,18 +21,41 @@ import type { SubscriptionDoc } from "@/lib/saasTypes";
  * punish a follower for the very process that's trying to fix their
  * expired period.
  *
- * Used by both the copy-trading enable/status API (app/api/saas/
- * copy-trading/route.ts) and the gate-sync cron (lib/cron/billingCron.ts)
- * — previously two separate, drifting copies of the same `status ===
- * "ACTIVE"` check, neither of which caught a lapsed-but-unprocessed period.
+ * This is the core, type-agnostic version (plain status string + Date):
+ * used directly by client-side code, which only has JSON-serialized
+ * subscription data (ISO date strings, already parsed into Date before
+ * calling this). isSubscriptionActiveForGates below is the server-side
+ * convenience wrapper over this for code that already holds a
+ * SubscriptionDoc straight from Mongo.
+ */
+export function isSubscriptionStatusActive(
+  status: string | null | undefined,
+  currentPeriodEnd: Date | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!status) return false;
+  if (status === "RENEWING") return true;
+  if (status !== "ACTIVE") return false;
+  if (currentPeriodEnd != null && currentPeriodEnd <= now) return false;
+  return true;
+}
+
+/**
+ * Server-side convenience wrapper over isSubscriptionStatusActive for code
+ * that already holds a SubscriptionDoc straight from Mongo (Date objects,
+ * not ISO strings).
+ *
+ * Used by the copy-trading enable/status API (app/api/saas/copy-trading/
+ * route.ts), the copy-trade follower-selection query (lib/copyTradeWorker.ts),
+ * the gate-sync cron (lib/cron/billingCron.ts), and the operator followers
+ * list (app/dashboard/followers/page.tsx's API data) — previously several
+ * separate, drifting copies of the same `status === "ACTIVE"` check, none
+ * of which caught a lapsed-but-unprocessed period.
  */
 export function isSubscriptionActiveForGates(
   sub: SubscriptionDoc | null | undefined,
   now: Date = new Date()
 ): boolean {
   if (!sub) return false;
-  if (sub.status === "RENEWING") return true;
-  if (sub.status !== "ACTIVE") return false;
-  if (sub.currentPeriodEnd !== null && sub.currentPeriodEnd <= now) return false;
-  return true;
+  return isSubscriptionStatusActive(sub.status, sub.currentPeriodEnd, now);
 }

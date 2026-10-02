@@ -1,12 +1,21 @@
 import { ObjectId, type Db, type Document } from "mongodb";
 import { checkFollowerFlatViaBot } from "@/lib/followerFlatCheck";
 import { closeFollowerPositionViaBot } from "@/lib/followerCloseViaBot";
-import { getBotDb, getSaasDb } from "@/lib/saasDb";
+import { getBotDb as defaultGetBotDb, getSaasDb as defaultGetSaasDb } from "@/lib/saasDb";
 import type { CopyTradeAuditEventDoc, CopyTradeLogDoc, CopyTradeLogStatus } from "@/lib/saasTypes";
 
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BOT_TRADES_COLLECTION = "futures_history";
+
+/**
+ * Test seam. Production code never sets this; tests swap in a fake so
+ * loadClosedLeaderTradeIds (and in future, other DB-touching logic here)
+ * can be exercised without a real MongoDB connection.
+ */
+export const _deps = {
+  getBotDb: defaultGetBotDb as () => Promise<Db>,
+  getSaasDb: defaultGetSaasDb as () => Promise<Db>,
+};
 
 export type ReconciliationIssueType =
   | "stale_processing"
@@ -74,42 +83,65 @@ function sameUserId(a: unknown, b: unknown): boolean {
   return a instanceof ObjectId && b instanceof ObjectId && a.equals(b);
 }
 
-function readLeaderTradeKeys(doc: Document): string[] {
-  return [doc._id?.toString(), doc.tradeId, doc.leaderTradeId, doc.id]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => value.trim());
-}
-
-async function loadClosedLeaderTradeIds(tradeIds: string[], since: Date): Promise<Set<string>> {
+/**
+ * Which of these leaderTradeIds (each the stringified _id of a
+ * futures_positions document — see copyTradeWorker.ts's
+ * `String(leaderPosition._id)`) no longer correspond to a LIVE leader
+ * position — i.e. the leader's trade is closed, from this bot's own
+ * perspective.
+ *
+ * This used to query futures_history (BOT_TRADES_COLLECTION) instead,
+ * trying to match leaderTradeId against that collection's own _id,
+ * tradeId, leaderTradeId or id fields. That join could never succeed: the
+ * bot's own syncToDbStrict (src/utils/database.ts) explicitly strips _id
+ * before every write ("const { _id, createdAt, ...updateData } = data"),
+ * so every futures_history document gets a brand-new, unrelated Mongo _id
+ * on insert — it has no relationship to the futures_positions._id a
+ * leaderTradeId was built from. The old query's status/date filters
+ * ($in: ["CLOSED","closed"], closedAt/exitTime >= since) could still match
+ * SOME document, but readLeaderTradeKeys's field-name matching against
+ * tradeId/leaderTradeId/id requires those exact field names to carry the
+ * SAME value as the original futures_positions._id, which nothing writes.
+ * In practice this meant open_without_close was never detected for any
+ * trade, for any follower — a leader's trade could close on Binance (and
+ * in futures_positions) and the follower's copy would stay "open" on the
+ * dashboard forever, with no repair ever triggering, because the very
+ * first detection step silently never matched.
+ *
+ * Querying futures_positions directly, by the same _id leaderTradeId was
+ * built from, is query the correct collection with the correct key: a
+ * leader trade is closed (from the bot's perspective) exactly when its
+ * document is no longer present there — closeFollowerPositionById's own
+ * "leader record is gone" fallback already treats an absent
+ * futures_positions document as closed for the same reason.
+ */
+export async function loadClosedLeaderTradeIds(tradeIds: string[]): Promise<Set<string>> {
   if (tradeIds.length === 0) return new Set();
-  const botDb = await getBotDb().catch(() => null);
+  const botDb = await _deps.getBotDb().catch(() => null);
   if (!botDb) return new Set();
+
   const objectTradeIds = tradeIds
     .filter((id) => ObjectId.isValid(id))
     .map((id) => new ObjectId(id));
+  if (objectTradeIds.length === 0) return new Set();
 
-  const docs = await botDb
-    .collection<Document>(BOT_TRADES_COLLECTION)
-    .find({
-      status: { $in: ["CLOSED", "closed"] },
-      $or: [
-        { tradeId: { $in: tradeIds } },
-        { leaderTradeId: { $in: tradeIds } },
-        { id: { $in: tradeIds } },
-        ...(objectTradeIds.length > 0 ? [{ _id: { $in: objectTradeIds } }] : []),
-        { closedAt: { $gte: since } },
-        { exitTime: { $gte: since } },
-      ],
-    })
-    .limit(1000)
+  const stillOpenDocs = await botDb
+    .collection<Document>("futures_positions")
+    .find({ _id: { $in: objectTradeIds } }, { projection: { _id: 1 } })
     .toArray()
-    .catch(() => []);
+    .catch(() => null);
 
+  // A query failure (not "found nothing", but the query itself erroring)
+  // must not be read as "every trade is closed" — that would make every
+  // lapsed/errored reconciliation run treat every open position as
+  // eligible for auto-close. Fail to an empty set (nothing flagged as
+  // closed) rather than guessing.
+  if (stillOpenDocs === null) return new Set();
+
+  const stillOpenIds = new Set(stillOpenDocs.map((doc) => doc._id.toString()));
   const closed = new Set<string>();
-  for (const doc of docs) {
-    for (const key of readLeaderTradeKeys(doc)) {
-      if (tradeIds.includes(key)) closed.add(key);
-    }
+  for (const id of tradeIds) {
+    if (ObjectId.isValid(id) && !stillOpenIds.has(id)) closed.add(id);
   }
   return closed;
 }
@@ -235,7 +267,7 @@ export async function runCopyTradeReconciliation(options?: {
   days?: number;
   applyRepairs?: boolean;
 }): Promise<CopyTradeReconciliationReport> {
-  const db = await getSaasDb();
+  const db = await _deps.getSaasDb();
   const days = Math.max(1, Math.min(options?.days ?? 7, 90));
   const applyRepairs = options?.applyRepairs ?? false;
   const since = new Date(Date.now() - days * DAY_MS);
@@ -259,7 +291,7 @@ export async function runCopyTradeReconciliation(options?: {
   const leaderTradeIds = Array.from(
     new Set(validLogs.map((log) => log.leaderTradeId).filter(Boolean))
   );
-  const closedLeaderTradeIds = await loadClosedLeaderTradeIds(leaderTradeIds, since);
+  const closedLeaderTradeIds = await loadClosedLeaderTradeIds(leaderTradeIds);
   const closeLogsNeedingOpenCheck = validLogs.filter((log) => log.action === "CLOSE");
   const historicalOpenKeys = new Set<string>();
   if (closeLogsNeedingOpenCheck.length > 0) {

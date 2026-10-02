@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Loader2, CreditCard, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import { FollowerHeader } from "@/components/FollowerHeader";
 import { openPaystackCheckout } from "@/lib/paystackClient";
+import { isSubscriptionStatusActive } from "@/lib/subscriptionGates";
 
 interface SubscriptionInfo {
   status: string;
@@ -241,6 +242,18 @@ export default function BillingPage () {
   };
 
   const normalizedStatus = subscription?.status?.toUpperCase();
+  // "ACTIVE" in the database doesn't mean genuinely active — see
+  // isSubscriptionStatusActive's doc comment. The status field only flips
+  // once the (monthly) billing cron runs, so a subscription whose
+  // currentPeriodEnd has already passed can sit as "ACTIVE" in the
+  // database, with a next-charge date already in the past, for weeks. This
+  // check is what actually decides whether the "Active" summary below (and
+  // its real currentPeriodEnd date) is shown, rather than falling through
+  // to the "subscription required" / resubscribe view further down.
+  const isGenuinelyActive = isSubscriptionStatusActive(
+    subscription?.status,
+    subscription?.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null
+  );
   return (
     <main className="min-h-screen flex flex-col">
       <FollowerHeader />
@@ -256,7 +269,7 @@ export default function BillingPage () {
                 <div className="h-3 w-full bg-[var(--panel-raised)] animate-pulse" />
                 <div className="h-3 w-2/3 bg-[var(--panel-raised)] animate-pulse" />
               </div>
-            ) : normalizedStatus === "ACTIVE" ? (
+            ) : isGenuinelyActive ? (
               <>
                 <div className="flex items-center gap-2 text-sm" style={ { color: "var(--long)" } }>
                   <CheckCircle2 size={ 16 } />

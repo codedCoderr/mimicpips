@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 import { getSaasDb } from "@/lib/saasDb";
 import { getCopyTradeMinActivationBalanceUSDT } from "@/lib/copyTradeSizing";
+import { isSubscriptionActiveForGates } from "@/lib/subscriptionGates";
 import type { UserDoc, ExchangeKeyDoc, SubscriptionDoc, PerformanceFeeInvoiceDoc } from "@/lib/saasTypes";
 import type { FollowerBehaviourEventDoc } from "@/lib/followerHealth";
 import { calculateFollowerHealth, type FollowerHealthScore } from "@/lib/followerHealth";
@@ -27,6 +28,7 @@ export interface FollowerListItem {
   lastBalanceCheckAt: string | null;
   copyTradingEnabled: boolean;
   subscriptionStatus: string | null;
+  subscriptionActive: boolean;
   pendingInvoiceCount: number;
   pendingInvoiceTotalNGN: number;
   health: FollowerHealthScore;
@@ -96,6 +98,13 @@ export async function GET ( req: NextRequest ) {
         lastBalanceCheckAt: lastCheckIso,
         copyTradingEnabled: !!u.copyTradingEnabled,
         subscriptionStatus: sub?.status ?? null,
+        // Computed server-side (see isSubscriptionActiveForGates) rather
+        // than left for the client to infer from subscriptionStatus alone:
+        // status stays "ACTIVE" in the database until the (monthly)
+        // billing cron runs, even after currentPeriodEnd has passed, so a
+        // client-side `=== "ACTIVE"` check would let an operator manually
+        // re-enable a follower whose subscription has genuinely lapsed.
+        subscriptionActive: isSubscriptionActiveForGates( sub ),
         pendingInvoiceCount: pending?.count ?? 0,
         pendingInvoiceTotalNGN: pending?.totalNGN ?? 0,
         health: healthByUser.get( u._id!.toString() )!,

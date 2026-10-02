@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getUserFromSessionToken, COOKIE_NAME } from "@/lib/saasAuth";
 import { getSaasDb } from "@/lib/saasDb";
 import { initializeSubscriptionCheckout } from "@/lib/paystack";
+import { isSubscriptionActiveForGates } from "@/lib/subscriptionGates";
 import { convertUsdToNgn } from "@/lib/exchangeRate";
 import { getErrorMessage } from "@/lib/errorMessage";
 import type { SubscriptionDoc } from "@/lib/saasTypes";
@@ -95,8 +96,14 @@ export async function POST(req: NextRequest) {
     const existing = await db
       .collection<SubscriptionDoc>("subscriptions")
       .findOne({ userId: user._id! });
+    // Checking status alone would block a user whose subscription has
+    // genuinely lapsed (currentPeriodEnd passed, but the monthly billing
+    // cron hasn't flipped status away from "ACTIVE" yet) from resubscribing
+    // at all — telling them "Already subscribed" when resubscribing is
+    // exactly the right action for them to take. See
+    // isSubscriptionActiveForGates's doc comment.
     const message =
-      existing?.status === "ACTIVE"
+      isSubscriptionActiveForGates(existing)
         ? "Already subscribed."
         : "A subscription checkout is already pending. Complete it or try again later.";
     return NextResponse.json({ error: message }, { status: 409 });

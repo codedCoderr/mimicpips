@@ -68,8 +68,23 @@ export async function GET ( req: NextRequest ) {
     const noPendingInvoice = !pendingInvoice;
     const allGatesMet = emailVerified && exchangeConnected && minimumBalanceMet && subscriptionActive && noPendingInvoice;
 
+    // The stored flag is reported AS-IF already gate-enforced here, not
+    // echoed raw: the gate-sync cron is what actually writes
+    // copyTradingEnabled: false once a gate like subscriptionActive fails,
+    // but that only happens when the cron runs (every 5 minutes, per the
+    // README — but cron scheduling is an external, deployment-side
+    // dependency this code can't guarantee). Between the gate failing and
+    // gate-sync's next run, the stored flag can be stale — a follower
+    // whose subscription just lapsed would otherwise still see "ACTIVE"
+    // here even though no new trade would actually be copied for them
+    // (copyTradeWorker.ts's own follower-selection query applies this same
+    // check independently). Reporting effectivelyEnabled, not the raw
+    // flag, means the dashboard is correct immediately, not just once
+    // gate-sync catches up.
+    const effectivelyEnabled = !!user.copyTradingEnabled && allGatesMet;
+
     return NextResponse.json( {
-      copyTradingEnabled: !!user.copyTradingEnabled,
+      copyTradingEnabled: effectivelyEnabled,
       gates: {
         emailVerified,
         exchangeConnected,
