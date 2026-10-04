@@ -14,6 +14,7 @@ import {
   isAlreadyClosedDetail,
   isResolvedStaleOpenDetail,
   isPnlOnlyCloseFailure,
+  mergeCloseEntries,
   type CopyTradeLogResponseDoc,
 } from "@/lib/copyTradeLogDisplay";
 
@@ -61,6 +62,34 @@ export async function GET ( req: NextRequest ) {
     const openByLeaderTradeId = new Map(
       openEntries.map((entry) => [entry.leaderTradeId, entry])
     );
+
+    // Fetch CLOSE rows for every leaderTradeId seen above, the same way
+    // openEntries fetches OPEN rows — but UNION the result into what's
+    // actually sent to the client, not just used for enrichment.
+    //
+    // Without this, a trade whose OPEN row is recent enough to fall inside
+    // the top-`limit` entries (sorted by createdAt desc) but whose CLOSE
+    // row is older or was written separately (e.g. by reconciliation, on
+    // its own schedule, well after the OPEN) can have its CLOSE row fall
+    // OUTSIDE that same window. The dashboard's own OPEN/CLOSE pairing
+    // logic is correct — a CLOSE row always wins when present — but it has
+    // nothing to pair against if the CLOSE row was never sent to the
+    // client at all. That produced exactly this symptom: a trade genuinely
+    // closed on the exchange, with a CLOSE row already correctly written
+    // in the database (by last session's reconciliation fix), still shown
+    // as "open" on the dashboard — not because detection or the close
+    // itself failed, but because this endpoint dropped the proof of it.
+    const closeEntries = leaderTradeIds.length > 0
+      ? await db
+          .collection<CopyTradeLogResponseDoc>("copy_trade_log")
+          .find({
+            userId: user._id!,
+            action: "CLOSE",
+            leaderTradeId: { $in: leaderTradeIds },
+          })
+          .toArray()
+      : [];
+    const mergedEntries = mergeCloseEntries(entries, closeEntries);
     const objectLeaderTradeIds = leaderTradeIds.filter((id): id is string => (
       typeof id === "string" && ObjectId.isValid(id)
     )).map((id) => new ObjectId(id));
@@ -92,7 +121,7 @@ export async function GET ( req: NextRequest ) {
     );
 
     return NextResponse.json( {
-      entries: entries.map( ( e ) => {
+      entries: mergedEntries.map( ( e ) => {
         const symbol = e.symbol || e.leaderSymbol || "UNKNOWN";
         const markPrice = e.action === "OPEN"
           ? priceBySymbol.get(e.leaderSymbol) ?? priceBySymbol.get(symbol) ?? null

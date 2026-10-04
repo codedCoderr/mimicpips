@@ -59,3 +59,30 @@ export function isSubscriptionActiveForGates(
   if (!sub) return false;
   return isSubscriptionStatusActive(sub.status, sub.currentPeriodEnd, now);
 }
+
+/**
+ * Is a PENDING_PAYMENT (or RENEWING) subscription row stale enough to be
+ * reclaimed by a new subscribe attempt?
+ *
+ * Nothing else ever clears a PENDING_PAYMENT row — only a successful
+ * Paystack webhook moves it to ACTIVE. If the user closes the checkout
+ * tab, the payment fails silently, or the webhook never arrives, the row
+ * stays PENDING_PAYMENT permanently, and without this check every future
+ * subscribe attempt is rejected as "already pending" with no way out.
+ *
+ * Returns false for a status this doesn't apply to (ACTIVE, EXPIRED,
+ * etc.) — callers combine this with their own status check; it is not a
+ * replacement for one.
+ */
+export function isPendingPaymentReclaimable(
+  status: string | null | undefined,
+  updatedAt: Date | null | undefined,
+  staleAfterMs: number,
+  now: Date = new Date()
+): boolean {
+  if (status !== "PENDING_PAYMENT" && status !== "RENEWING") return false;
+  if (!updatedAt) return true; // no timestamp to judge by — treat as stale rather than stuck forever
+  // Strict >, matching the route's Mongo condition
+  // (updatedAt < now - staleAfterMs, i.e. strictly older than the cutoff).
+  return now.getTime() - updatedAt.getTime() > staleAfterMs;
+}

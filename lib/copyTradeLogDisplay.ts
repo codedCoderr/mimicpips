@@ -28,6 +28,48 @@ export type CopyTradeLogResponseDoc = CopyTradeLogDoc & {
 
 export const BOT_TRADES_COLLECTION = "futures_history";
 
+/**
+ * Union a possibly-truncated window of a follower's copy_trade_log rows
+ * (sorted by createdAt desc, limited to N) with a full set of CLOSE rows
+ * for the same leaderTradeIds, so a CLOSE row is never silently dropped
+ * just because it falls outside the original window.
+ *
+ * Without this, a CLOSE row older — or simply written later by a separate
+ * process like reconciliation — than the most recent N log rows could be
+ * excluded from `entries` even though its matching OPEN row was included.
+ * The dashboard's own OPEN/CLOSE pairing is correct (a CLOSE row always
+ * wins when present), but it has nothing to pair against if the CLOSE row
+ * was never sent to the client at all — producing a trade that is
+ * genuinely closed, with a CLOSE row already in the database, still shown
+ * as open.
+ *
+ * Returns a new array; does not mutate either input. Ordered by
+ * createdAt descending, same contract as the original `entries` query.
+ */
+export function mergeCloseEntries<T extends { _id?: unknown; createdAt?: unknown }>(
+  entries: T[],
+  closeEntries: T[]
+): T[] {
+  const idOf = (e: T): string | null => {
+    const id = e._id as { toString?: () => string } | undefined;
+    return id?.toString ? id.toString() : null;
+  };
+  const seen = new Set(entries.map(idOf).filter((id): id is string => id !== null));
+  const merged = [...entries];
+  for (const closeEntry of closeEntries) {
+    const id = idOf(closeEntry);
+    if (id !== null && !seen.has(id)) {
+      merged.push(closeEntry);
+      seen.add(id);
+    }
+  }
+  const timeOf = (e: T): number => {
+    const createdAt = e.createdAt as string | Date | undefined;
+    return createdAt ? new Date(createdAt).getTime() : 0;
+  };
+  return merged.sort((a, b) => timeOf(b) - timeOf(a));
+}
+
 export function toBinanceSymbol(symbol: string): string {
   return symbol.replace(":USDT", "").replace("/", "");
 }
