@@ -29,6 +29,33 @@ export type CopyTradeLogResponseDoc = CopyTradeLogDoc & {
 export const BOT_TRADES_COLLECTION = "futures_history";
 
 /**
+ * Human-readable explanation of why a trade that LOOKS stuck open (an
+ * executed/possibly-live OPEN row with no matching CLOSE) hasn't been
+ * resolved, given what each layer of the reconciliation pipeline reports
+ * for it. Used by the read-only diagnose-open-position endpoint — never
+ * drives any repair decision itself, just explains one to a human.
+ */
+export function diagnoseStuckOpenPosition(
+  leaderPositionStillInFuturesPositions: boolean | null,
+  followerFlatState: "flat" | "open" | "unknown",
+  followerFlatReason?: string
+): string {
+  if (leaderPositionStillInFuturesPositions === true) {
+    return "Leader's own position is STILL in futures_positions — the leader's trade has not actually closed yet, from the bot's point of view.";
+  }
+  if (leaderPositionStillInFuturesPositions === null) {
+    return "Could not reach the bot's own database to check the leader's position — connectivity or configuration issue (see leaderPositionStillInFuturesPositions: null).";
+  }
+  if (followerFlatState === "open") {
+    return "Leader is closed, but the follower is STILL confirmed open on the exchange directly — reconciliation would try to close it, and should have.";
+  }
+  if (followerFlatState === "unknown") {
+    return `Leader is closed, but the exchange check itself failed: ${followerFlatReason ?? "unknown reason"}. This blocks reconciliation from acting at all.`;
+  }
+  return "Leader is closed AND the follower is confirmed flat on the exchange. Reconciliation should already have written a CLOSE row for this — if the dashboard still shows it open, the bug is in how the dashboard reads the log, not in detection.";
+}
+
+/**
  * Union a possibly-truncated window of a follower's copy_trade_log rows
  * (sorted by createdAt desc, limited to N) with a full set of CLOSE rows
  * for the same leaderTradeIds, so a CLOSE row is never silently dropped
