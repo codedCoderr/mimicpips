@@ -93,12 +93,49 @@ export async function encryptSecret(plaintext: string): Promise<EncryptedPayload
   };
 }
 
+/**
+ * Why this doesn't just call sodium.crypto_secretbox_open_easy directly:
+ * libsodium-wrappers throws its own raw native error messages on failure
+ * (e.g. "incomplete input" from from_base64 on malformed/truncated
+ * base64, or "wrong secret key for the given ciphertext" from
+ * crypto_secretbox_open_easy on an authentication failure) rather than
+ * returning null/false, which this function's old single try/catch
+ * assumed. Two real followers' stored keys failed with exactly these two
+ * different messages, at the same moment — which could not be explained
+ * by a simple master-key mismatch (that produces the SAME failure for
+ * every follower, not different ones per follower). The bot's identical
+ * copy of this function (src/saas/exchangeKeyCrypto.ts) has the matching
+ * fix — keep the two in sync if this changes again.
+ *
+ * This wraps the two distinct failure points separately so the resulting
+ * error at least says WHICH of "malformed/corrupted stored ciphertext"
+ * (a base64-decode failure) vs. "wrong key or tampered ciphertext" (an
+ * auth failure) actually happened — they require different fixes (data
+ * repair vs. re-verifying the follower's key).
+ */
 export async function decryptSecret(payload: EncryptedPayload): Promise<string> {
   await ensureReady();
   const key = loadMasterKey();
-  const ciphertext = sodium.from_base64(payload.ciphertext, sodium.base64_variants.ORIGINAL);
-  const nonce = sodium.from_base64(payload.nonce, sodium.base64_variants.ORIGINAL);
-  const plaintext = sodium.crypto_secretbox_open_easy(ciphertext, nonce, key);
+
+  let ciphertext: Uint8Array;
+  let nonce: Uint8Array;
+  try {
+    ciphertext = sodium.from_base64(payload.ciphertext, sodium.base64_variants.ORIGINAL);
+    nonce = sodium.from_base64(payload.nonce, sodium.base64_variants.ORIGINAL);
+  } catch (err: any) {
+    throw new Error(
+      `Stored key data is corrupted or malformed (base64 decode failed: ${err?.message ?? err}). This is a data problem, not a wrong-key problem — the follower will need to reconnect their exchange key.`
+    );
+  }
+
+  let plaintext: Uint8Array | false;
+  try {
+    plaintext = sodium.crypto_secretbox_open_easy(ciphertext, nonce, key);
+  } catch (err: any) {
+    throw new Error(
+      `Decryption failed: ${err?.message ?? err}. Check that SAAS_MASTER_KEY has not been rotated on one side (this app or the bot) without the other.`
+    );
+  }
   if (!plaintext) {
     throw new Error("Decryption failed — wrong key, corrupted data, or tampered ciphertext.");
   }
