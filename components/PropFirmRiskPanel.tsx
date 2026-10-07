@@ -234,8 +234,11 @@ export function PropFirmRiskPanel({
   performanceSummary,
   recentTrades,
   onAfterAction,
+  maxPositions,
 }: {
   risk: Partial<PropFirmRiskDashboard> | null;
+  /** Live max-entry limit from snapshot.account; used when risk.rules is absent. */
+  maxPositions?: number | null;
   performanceSummary?: PerformanceSummary | null;
   recentTrades?: RecentTradeRow[] | null;
   onAfterAction?: () => void;
@@ -266,7 +269,7 @@ export function PropFirmRiskPanel({
   const rules = {
     dailyDrawdownLimitPct: num(risk.rules?.dailyDrawdownLimitPct, 3),
     warningThresholdPct: num(risk.rules?.warningThresholdPct, 0.75),
-    maxPositions: num(risk.rules?.maxPositions, 3),
+    maxPositions: num(risk.rules?.maxPositions, num(maxPositions, 5)),
     maxAccountExposurePct: num(risk.rules?.maxAccountExposurePct, 20),
     minFidelityScore: num(risk.rules?.minFidelityScore, 85),
   };

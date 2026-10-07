@@ -274,6 +274,7 @@ export default function DashboardPage() {
               <AccountSummary snapshot={displaySnapshot} />
               <PropFirmRiskPanel
                 risk={displaySnapshot.propFirmRisk ?? null}
+                maxPositions={displaySnapshot.account?.maxPositions}
                 performanceSummary={performanceSummary}
                 recentTrades={trades}
                 onAfterAction={refetch}
