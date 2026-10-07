@@ -74,6 +74,7 @@ export default function DashboardPage() {
   const [ready, setReady] = useState(false);
   const [performanceSummary, setPerformanceSummary] =
     useState<PerformanceSummary | null>(null);
+  const [perfRefreshKey, setPerfRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,6 +189,14 @@ export default function DashboardPage() {
       ) {
         refetch();
       }
+      // Only trade-level events change win rate / PnL; snapshot ticks don't.
+      if (
+        event.type === "position.closed" ||
+        event.type === "tp.hit" ||
+        event.type === "order.filled"
+      ) {
+        setPerfRefreshKey((k) => k + 1);
+      }
     };
   }, [refetch]);
 
@@ -282,12 +291,16 @@ export default function DashboardPage() {
               <PerformanceSummaryPanel
                 session={session}
                 onStatsLoaded={setPerformanceSummary}
+                refreshKey={perfRefreshKey}
               />
               <FollowersSummaryPanel />
               <PositionsTable
                 positions={displaySnapshot.positions}
                 session={session}
-                onPositionClosed={refetch}
+                onPositionClosed={() => {
+                  refetch();
+                  setPerfRefreshKey((k) => k + 1);
+                }}
               />
               <TradeHistoryTable
                 session={session}

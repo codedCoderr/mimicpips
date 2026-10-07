@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { Session } from "@/lib/session";
 import { fetchPerformanceSummary, ApiError } from "@/lib/api";
 import type { PerformanceSummary } from "@/lib/types";
@@ -56,17 +56,20 @@ const RANGE_OPTIONS = [
 export function PerformanceSummaryPanel({
   session,
   onStatsLoaded,
+  refreshKey = 0,
 }: {
   session: Session;
   onStatsLoaded?: (stats: PerformanceSummary | null) => void;
+  /** Bump this to re-fetch (e.g. when a trade closes). */
+  refreshKey?: number;
 }) {
   const [days, setDays] = useState(30);
   const [stats, setStats] = useState<PerformanceSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     fetchPerformanceSummary(session, days)
       .then((result) => {
         setStats(result);
@@ -80,8 +83,22 @@ export function PerformanceSummaryPanel({
       .finally(() => setLoading(false));
   }, [session, days, onStatsLoaded]);
 
+  // Initial load + range change (shows skeleton)
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Background refresh when a trade closes / the parent asks for it
+  const firstRefreshKey = useRef(refreshKey);
+  useEffect(() => {
+    if (refreshKey === firstRefreshKey.current) return;
+    load(true);
+  }, [refreshKey, load]);
+
+  // Safety net: keep stats fresh if the tab stays open
+  useEffect(() => {
+    const id = setInterval(() => load(true), 60_000);
+    return () => clearInterval(id);
   }, [load]);
 
   const winRateNum = stats ? parseFloat(stats.winRate) : null;
