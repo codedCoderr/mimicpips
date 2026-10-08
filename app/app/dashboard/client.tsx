@@ -66,6 +66,8 @@ interface UnifiedTrade {
   openedAt: string;
   closedAt: string | null;
   isOpen: boolean;
+  /** OPEN attempt that never produced a live position (failed / skipped). */
+  isMissed: boolean;
 }
 
 interface CopyTradeLogEntry {
@@ -208,6 +210,11 @@ function statusColor ( status: string ): string {
   if ( status === "failed" ) return "var(--short)";
   if ( status.startsWith( "skipped_" ) ) return "var(--warn)";
   return "var(--muted)";
+}
+
+/** An OPEN log row that did not result in a real position on the exchange. */
+function isNotCopiedStatus ( status: string | undefined | null ): boolean {
+  return status === "failed" || ( status ?? "" ).startsWith( "skipped_" );
 }
 
 function statusLabel ( status: string ): string {
@@ -510,9 +517,16 @@ export function CopyTradingDashboardClient ( {
   const unifiedTrades = ( () => {
     if ( !logEntries ) return [];
     const map = new Map<string, UnifiedTrade>();
+    // Trades that have at least one OPEN row that really went through
+    // (anything other than failed / skipped_*). A later duplicate or retry
+    // row that was skipped must not hide a genuinely open position.
+    const liveOpenKeys = new Set<string>();
 
     for ( const entry of logEntries ) {
       const tradeKey = entry.leaderTradeId || entry.id;
+      if ( entry.action === "OPEN" && !isNotCopiedStatus( entry.status ) ) {
+        liveOpenKeys.add( tradeKey );
+      }
 
       if ( !map.has( tradeKey ) ) {
         map.set( tradeKey, {
@@ -540,6 +554,7 @@ export function CopyTradingDashboardClient ( {
           openedAt: entry.action === "OPEN" ? entry.executedAt || entry.createdAt : entry.createdAt,
           closedAt: entry.action === "CLOSE" ? entry.executedAt || entry.createdAt : null,
           isOpen: entry.action === "OPEN",
+          isMissed: false,
         } );
       }
 
@@ -567,21 +582,35 @@ export function CopyTradingDashboardClient ( {
         row.isOpen = false;
       }
     }
+    // An OPEN that failed or was skipped never created a position, so it is
+    // not "open": it belongs in history as a not-copied attempt instead.
+    for ( const [ key, row ] of map ) {
+      if ( row.isOpen && !liveOpenKeys.has( key ) ) {
+        row.isOpen = false;
+        row.isMissed = true;
+      }
+    }
     return Array.from( map.values() );
   } )();
 
-  const totalCopiedTrades = unifiedTrades.length;
+  const totalCopiedTrades = unifiedTrades.filter( e => !e.isMissed ).length;
   const openTrades = unifiedTrades
     .filter( e => e.isOpen )
     .sort( ( a, b ) => new Date( b.openedAt ).getTime() - new Date( a.openedAt ).getTime() );
   const activeTradesCount = openTrades.length;
   const protectedActiveTrades = openTrades.filter( e => e.stopLossPrice ).length;
   const closedTrades = unifiedTrades
-    .filter( e => !e.isOpen )
+    .filter( e => !e.isOpen && !e.isMissed )
     .sort( ( a, b ) => new Date( b.closedAt ?? b.executedAt ).getTime() - new Date( a.closedAt ?? a.executedAt ).getTime() );
   const netPnl = closedTrades.reduce( ( sum, e ) => sum + ( e.realizedPnl || 0 ), 0 );
   const winningTrades = closedTrades.filter( e => ( e.realizedPnl || 0 ) > 0 ).length;
   const winRate = closedTrades.length > 0 ? ( winningTrades / closedTrades.length ) * 100 : 0;
+  // History shows closed trades plus attempts that were not copied (so a
+  // failed copy is visible, with its reason, without counting as a trade).
+  const historyTrades = [
+    ...closedTrades,
+    ...unifiedTrades.filter( e => e.isMissed ),
+  ].sort( ( a, b ) => new Date( b.closedAt ?? b.executedAt ).getTime() - new Date( a.closedAt ?? a.executedAt ).getTime() );
 
   return (
     <main className="min-h-screen flex flex-col">
@@ -968,13 +997,13 @@ export function CopyTradingDashboardClient ( {
               </div>
             ) }
 
-            { !logLoading && closedTrades.length === 0 && (
+            { !logLoading && historyTrades.length === 0 && (
               <div className="p-8 text-center">
                 <p className="text-sm text-[var(--muted)] font-mono">No closed copied trades yet.</p>
               </div>
             ) }
 
-            { !logLoading && closedTrades.length > 0 && (
+            { !logLoading && historyTrades.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -985,7 +1014,7 @@ export function CopyTradingDashboardClient ( {
                     </tr>
                   </thead>
                   <tbody className="font-mono">
-                    { closedTrades.map( ( e ) => (
+                    { historyTrades.map( ( e ) => (
                       <tr key={ e.id } className="border-b border-[var(--hairline)] last:border-b-0 hover:bg-[var(--panel-raised)] transition-colors text-xs">
                         <td className="px-4 py-2.5 font-semibold whitespace-nowrap">{ ( e.symbol || "UNKNOWN" ).split( ":" )[ 0 ] }</td>
                         <td className="px-4 py-2.5">
@@ -993,17 +1022,21 @@ export function CopyTradingDashboardClient ( {
                             { e.side || "LONG" }
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ fmtTradePrice( e.entryPrice ) }</td>
-                        <td className="px-4 py-2.5 whitespace-nowrap">{ fmtTradePrice( e.exitPrice ) }</td>
-                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ formatDuration( e.openedAt, e.closedAt ?? e.executedAt ) }</td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ e.isMissed ? "—" : fmtTradePrice( e.entryPrice ) }</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">{ e.isMissed ? "—" : fmtTradePrice( e.exitPrice ) }</td>
+                        <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ e.isMissed ? "—" : formatDuration( e.openedAt, e.closedAt ?? e.executedAt ) }</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <div className="font-semibold" style={ { color: ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long)" : "var(--short)" } }>
-                            { ( e.realizedPnl ?? 0 ) >= 0 ? "+" : "" }{ fmtUsd( e.realizedPnl ?? 0 ) }
-                          </div>
+                          { e.isMissed ? (
+                            <span className="text-[var(--muted)]">—</span>
+                          ) : (
+                            <div className="font-semibold" style={ { color: ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long)" : "var(--short)" } }>
+                              { ( e.realizedPnl ?? 0 ) >= 0 ? "+" : "" }{ fmtUsd( e.realizedPnl ?? 0 ) }
+                            </div>
+                          ) }
                         </td>
                         <td className="px-4 py-2.5 text-[var(--muted)] whitespace-nowrap">{ formatRelativeTime( e.closedAt ?? e.executedAt ) }</td>
                         <td className="px-4 py-2.5 whitespace-nowrap" style={ { color: statusColor( e.status ) } }>
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5" style={ { border: `1px solid ${ ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long-dim)" : "var(--short-dim)" }` } }>
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5" style={ { border: `1px solid ${ e.isMissed ? "currentColor" : ( e.realizedPnl ?? 0 ) >= 0 ? "var(--long-dim)" : "var(--short-dim)" }` } }>
                             { statusLabel( e.status || "SUCCESS" ) }
                           </span>
                           { e.detail && (
