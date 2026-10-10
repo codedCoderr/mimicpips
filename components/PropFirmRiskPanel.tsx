@@ -316,13 +316,16 @@ export function PropFirmRiskPanel({
   const derivedWorstSymbols = derivedSymbolBuckets
     .filter((row) => row.pnl < 0)
     .sort((a, b) => a.pnl - b.pnl);
-  const derivedExitLeaks = buildBuckets(recentTrades, (trade) =>
-    trade.closeReason || "Unknown"
+  const derivedExitLeaks = buildBuckets(
+    recentTrades,
+    (trade) => trade.closeReason || "Unknown"
   )
     .filter((row) => row.pnl < 0)
     .sort((a, b) => a.pnl - b.pnl);
   const bestSymbols =
-    telemetry.bestSymbols.length > 0 ? telemetry.bestSymbols : derivedBestSymbols;
+    telemetry.bestSymbols.length > 0
+      ? telemetry.bestSymbols
+      : derivedBestSymbols;
   const worstSymbols =
     telemetry.worstSymbols.length > 0
       ? telemetry.worstSymbols
@@ -567,7 +570,7 @@ export function PropFirmRiskPanel({
           </div>
         )}
 
-        <div className='grid grid-cols-2 lg:grid-cols-5 gap-px bg-[var(--hairline)]'>
+        {/* <div className='grid grid-cols-2 lg:grid-cols-5 gap-px bg-[var(--hairline)]'>
           <Metric
             label='Window win rate'
             value={hasWindowTrades ? fmtPct(windowStats.winRate) : "-"}
@@ -609,7 +612,7 @@ export function PropFirmRiskPanel({
                 : "short"
             }
           />
-        </div>
+        </div> */}
 
         <div className='grid grid-cols-1 xl:grid-cols-3 gap-4'>
           <BucketTable
